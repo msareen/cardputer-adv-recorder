@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+defaults:
+  run:
+    working-directory: firmware
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -29,5 +33,5 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            dist/cardputer-adv-recorder-${{ github.ref_name }}.bin
-            dist/SHA256SUMS.txt
+            firmware/dist/cardputer-adv-recorder-${{ github.ref_name }}.bin
+            firmware/dist/SHA256SUMS.txt
