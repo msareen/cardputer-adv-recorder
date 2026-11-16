@@ -21,17 +21,25 @@ Rule: new sync logic that does not touch Arduino, SD, WiFi or BLE goes in its ow
 
 `tools/mock-device` (its own Rust project, independent of firmware and desktop) implements the device side of the `/v1` protocol
 (`info`, `time`, `manifest`, `recordings/{id}` with Range, `sha256`, `ack`,
-`done`) on localhost, serving WAVs from a folder. It can inject faults: dropped
+`done`) on localhost over plain HTTP, serving WAVs from a folder. The desktop
+adds it as an unpaired dev device; real devices are paired over Bluetooth and
+use HTTPS with mutual TLS. With `--mdns` it announces itself like a device in
+sync mode, so the desktop's discovery worker auto-syncs it. It can inject
+faults: dropped
 connections mid-download, hash mismatch, `busy`, `low_battery`. The desktop app
 syncs against it by IP address (milestone 3), so no hardware is needed.
 
 ## 3. Real device (firmware)
 
-Only for what the PC cannot show: heap, SD speed, radio coexistence, battery.
-Build and flash with `platformio run --target upload`, then walk through
-`firmware/docs/hardware-test-checklist.md`. During milestone 2, test the device
-HTTP server with plain `curl` against the same endpoints the mock serves, so
-mock and firmware are checked against one protocol.
+Only for what the PC cannot show: heap, SD speed, radio coexistence, battery,
+and the real Bluetooth and TLS stacks. Build and flash with
+`platformio run --target upload`, then walk through
+`firmware/docs/hardware-test-checklist.md`.
+
+The pairing protocol is checked on the PC from both ends: the desktop runs it
+against a reference device written in Rust (`pairing.rs`), and the firmware's
+pure parts (CBOR, framing, HKDF, code) are tested against the same vectors.
+The desktop's mutual-TLS client is tested against a local TLS server.
 
 ## Keeping mock and firmware in agreement
 

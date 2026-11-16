@@ -21,11 +21,20 @@ every request and the manifest cursor bumps when it changes.
 | `--fault busy` | 409 `busy` on everything except `/v1/info` |
 | `--fault low-battery` | 3% battery, 403 `low_battery` except on `/v1/info` |
 | `--delete-after-sync` | Delete the file on ack, unless its name contains `LOCKED` |
+| `--mdns` | Announce `_cprec._tcp.local` on loopback, like a device in sync mode; the desktop auto-syncs it if it was added as a dev device |
 
-Not mocked yet: TLS, BLE, pairing, mDNS, and the real `cprc` recording id (ids
+Not mocked yet: TLS, BLE, pairing, and the real `cprc` recording id (ids
 are a placeholder hash of name and size, in the same 32-hex format). Download
 reads the whole file into memory, which is fine for a dev tool.
 
-Known gap: with `drop-mid`, `curl` reports an empty reply and no bytes, so
-partial-download resume with `Range` is tested by sending a `Range` header by
-hand, not by the fault mode.
+`drop-mid` sends the first half of each response body, then resets the
+connection, so a client keeps a partial file and must resume with `Range`.
+Because every request is cut, a download never completes under this fault;
+restart the mock without it to watch the resume finish.
+
+End-to-end check with the desktop engine (no window needed):
+
+```sh
+cd desktop/src-tauri
+cargo run --example sync_cli -- 127.0.0.1:8080 ./cli-library
+```

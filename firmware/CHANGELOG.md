@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased (1.5.0-dev) - Sync
+
+### Milestone 5: hands-free sync
+
+- Announce `_cprec._tcp.local` (TXT `id`) over mDNS while in sync mode.
+- Add Auto-Sync Charging (Settings > Sync, default On): starts sync mode on
+  external power when there are unsynced recordings, with a 10-minute
+  cooldown; `Esc` pauses it until unplugged.
+- End sync mode after 3 minutes (automatic) or 10 minutes (`S`) without a
+  desktop request.
+- Show USB power and the number of new recordings in the library header.
+
+### Milestone 4: pairing and mutual TLS
+
+- Add Settings > Sync: Pair with Desktop, Paired With, WiFi, Delete After
+  Sync, Forget Pairing.
+- Pair over Bluetooth LE (NimBLE): numeric comparison with a committed
+  nonce, AES-256-GCM session, WiFi provisioning from the desktop.
+- Serve `/v1` over HTTPS on port 8443 with mutual TLS: self-signed device
+  certificate, only the paired desktop's certificate accepted.
+- Remove the build-time WiFi credentials and the plain HTTP server.
+
+### Milestones 1 and 2: identity and WiFi data path
+
+- Write a `cprc` RIFF chunk (recording id, device id, start time) into every
+  new recording; playback reads it without seeking and older files still play.
+- Keep a sync index in `RECORDER.SYN` with stable ids, cached SHA-256 and acks.
+- Generate a per-device P-256 key pair on first boot; device id is derived
+  from it.
+- Add a dev sync mode (`S` in the library): WiFi from build flags and a plain
+  HTTP `/v1` server with info, time, manifest, Range downloads, sha256, ack,
+  delete and done.
+- Add the `Delete After Sync` setting (default Off; locked files are kept).
+- Pin M5GFX to 0.2.27 because 0.2.22 is no longer in the PlatformIO registry.
+
 ## 1.4.0 - Power, settings, and playback speed
 
 - Remove the unused `Idle Sleep WIP` setting.

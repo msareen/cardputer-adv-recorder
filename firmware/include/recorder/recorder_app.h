@@ -6,14 +6,24 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <mutex>
 #include <vector>
 
 #include "recorder/hardware/audio_service.h"
+#include "recorder/hardware/ble_service.h"
 #include "recorder/hardware/board_service.h"
 #include "recorder/hardware/power_service.h"
 #include "recorder/hardware/storage_service.h"
+#include "recorder/hardware/wifi_service.h"
 #include "recorder/input.h"
+#include "recorder/media/recording_chunk.h"
 #include "recorder/media/wav_file.h"
+#include "recorder/sync/cbor.h"
+#include "recorder/sync/device_identity.h"
+#include "recorder/sync/peer_store.h"
+#include "recorder/sync/secure_channel.h"
+#include "recorder/sync/sync_index.h"
+#include "recorder/sync/sync_server.h"
 
 namespace cardputer_recorder {
 
@@ -32,6 +42,26 @@ private:
         kRename,
         kHelp,
         kError,
+        // Radios are on only in these two states. kSyncing is entered from
+        // kBrowsing (S key), kPairing from Settings > Sync.
+        kSyncing,
+        kPairing,
+    };
+
+    enum class PairPhase : std::uint8_t {
+        kScanning,     // WiFi scan for the desktop's network list
+        kAdvertising,  // BLE on, waiting for a desktop
+        kExchanging,   // hello received, waiting for reveal
+        kConfirm,      // showing the code, waiting for Enter
+        kAwaitingHost, // Enter pressed, waiting for the pair message
+        kSession,      // known desktop connected (change WiFi)
+        kJoining,      // trying the provisioned WiFi once
+        kDone,
+    };
+
+    enum class SyncPhase : std::uint8_t {
+        kJoining,
+        kServing,
     };
 
     struct Settings {
@@ -43,6 +73,8 @@ private:
         std::uint8_t seekStepSeconds = 5;
         bool vadEnabled = false;
         bool triplePressWake = false;
+        bool deleteAfterSync = false;
+        bool autoSyncWhenCharging = true;
     };
 
     enum class ScreenSaverState : std::uint8_t {
@@ -54,6 +86,7 @@ private:
     enum class SettingsPage : std::uint8_t {
         kMain,
         kScreenSaver,
+        kSync,
     };
 
     void handleInput(const InputEvent& event);
@@ -121,6 +154,42 @@ private:
     String selectedRecordingDetail();
     void setError(const String& message);
     void draw();
+
+    // Sync (app/sync_flow.cpp).
+    void startSync(bool automatic = false);
+    void serviceAutoSync();
+    void refreshUnsyncedCount();
+    void serviceSync();
+    void stopSync(const String& message);
+    void handleSyncInput(const InputEvent& event);
+    void drawSyncScreen();
+    void onSyncProgress(const std::string& name, std::uint32_t done,
+                        std::uint32_t total);
+    bool ensureSyncIndex();
+    bool saveSyncIndex();
+    void reconcileSyncIndex();
+    void syncNoteSaved(const String& path,
+                       const RecordingIdentity& identity,
+                       std::uint32_t fileSize, std::uint32_t dataBytes);
+    void syncNoteRenamed(const String& from, const String& to);
+    void syncNoteDeleted(const String& name);
+    RecordingIdentity makeRecordingIdentity();
+    bool clockIsSet() const;
+
+    // Pairing over BLE (app/pairing_flow.cpp).
+    void openPairing();
+    void servicePairing();
+    void closePairing(const String& message);
+    void handlePairingInput(const InputEvent& event);
+    void drawPairingScreen();
+    void handleControlMessage(const std::string& frame);
+    void resetPairSession();
+    bool sendPlain(const CborWriter& message);
+    bool sendSecure(const CborWriter& message);
+    void sendPairError(const char* code);
+    void sendNetworks();
+    void startPairWifi(const std::string& ssid, const std::string& password);
+    void forgetPairing();
 
     // M5Unified exposes two microphone queue slots. Extra buffers absorb SD
     // latency while a dedicated task writes completed blocks.
@@ -191,6 +260,53 @@ private:
     unsigned long lastDrawMs_ = 0;
     BatteryReading battery_;
     bool forceRedraw_ = true;
+
+    DeviceIdentity identity_;
+    WifiService wifi_;
+    SyncServer syncServer_;
+    SyncIndex syncIndex_;
+    bool syncIndexLoaded_ = false;
+    RecordingIdentity currentIdentity_;
+    SyncPhase syncPhase_ = SyncPhase::kJoining;
+    unsigned long syncPhaseStartedMs_ = 0;
+    std::atomic<bool> syncDoneRequested_{false};
+    std::atomic<bool> syncDirty_{false};
+    // Guards syncIndex_ and the progress fields below while the HTTPS
+    // server task is running.
+    std::mutex syncMutex_;
+    String syncAddress_;
+    std::string syncFile_;
+    std::uint32_t syncDone_ = 0;
+    std::uint32_t syncTotal_ = 0;
+    std::uint32_t syncUnsyncedAtStart_ = 0;
+    std::uint32_t syncUnsyncedShown_ = 0;
+    // Hands-free sync (milestone 5).
+    bool syncAutomatic_ = false;
+    std::atomic<unsigned long> syncLastRequestMs_{0};
+    bool externalPower_ = false;
+    bool autoSyncSuppressed_ = false;  // Esc pressed; cleared on unplug
+    unsigned long autoSyncBlockedAtMs_ = 0;
+    bool autoSyncBlocked_ = false;
+    unsigned long lastAutoCheckMs_ = 0;
+    std::uint32_t libraryUnsynced_ = 0;
+
+    BleService ble_;
+    PeerStore peerStore_;
+    Peer peer_;
+    SecureChannel pairChannel_;
+    PairPhase pairPhase_ = PairPhase::kScanning;
+    unsigned long pairStartedMs_ = 0;
+    unsigned long pairJoinStartedMs_ = 0;
+    std::uint8_t pairHostKey_[65] = {};
+    std::uint8_t pairCommit_[32] = {};
+    std::uint8_t pairDeviceNonce_[16] = {};
+    bool pairGotHello_ = false;
+    bool pairHostKnown_ = false;
+    std::string pairCode_;
+    String pairResult_;
+    std::vector<std::string> pairNetworks_;
+    std::string pairJoinSsid_;
+    bool forgetConfirm_ = false;
 };
 
 }  // namespace cardputer_recorder

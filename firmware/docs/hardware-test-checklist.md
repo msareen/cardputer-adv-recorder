@@ -62,5 +62,69 @@
   without hanging.
 - Repeat microphone-to-speaker transitions and listen for residual hiss.
 
+## Pairing (Bluetooth)
+
+Keep the serial monitor open: `[PAIR]` and `[SYNC]` lines log free heap.
+
+- Settings > Sync > Pair with Desktop: "Scanning WiFi", then "Pair with
+  desktop" with a two-minute countdown.
+- Desktop: Devices > Pair new device > Search lists the Cardputer.
+- Both screens show the same six digits. `Esc` on the device makes the
+  desktop report "cancelled".
+- Click Codes match, press `Enter`: the desktop lists WiFi networks the
+  device saw. Finish with the right password: "WiFi OK", and Settings > Sync
+  shows the desktop's user name and the SSID.
+- Repeat with a wrong password: "WiFi failed", pairing kept. Devices >
+  Change WiFi (device in pairing mode) fixes it without a code.
+- Let pairing mode time out: it closes after two minutes.
+- Pair a second desktop user: it needs the code and `Enter`, and replaces the
+  first; the first desktop's sync now fails the TLS handshake.
+- Forget Pairing needs two `Enter` presses; afterwards `S` asks to pair.
+- After pairing, record and play a clip: Bluetooth is fully off.
+
+## Sync
+
+- Play a recording made by firmware 1.4.0 and one made by this build; both
+  must play, and the new one must report its duration correctly.
+- Press `S` in the library; confirm the device shows its `IP:8443` within
+  15 seconds.
+- `curl -k https://IP:8443/v1/info` without a client certificate must fail
+  the handshake (mutual TLS).
+- From the desktop, Sync now pulls every recording; each file has a 32-hex
+  id, and the ids stay the same after a reboot and after a rename.
+- Sync a 10-minute recording; compare the library file's SHA-256 with the
+  file copied off the card.
+- Pull the network mid-download, then sync again: the partial file resumes.
+- Record the serial `free heap`, `min heap` and `KB/s` lines (WiFi + TLS
+  with the Bluetooth controller memory reserved).
+- Sync from the desktop app; confirm `Unsynced` drops to 0 and the device
+  returns to the library after the desktop calls `/v1/done`.
+- With `Delete After Sync` on, confirm acked files are deleted and locked
+  files are kept.
+- Press `Esc` during a download; WiFi turns off and the desktop resumes the
+  partial file on the next sync.
+- Confirm `R` does nothing in sync mode and that recording works normally
+  after leaving it.
+
+## Hands-free sync
+
+- With the desktop app open (auto-sync on), press `S`: the device shows
+  "on network" in Devices and syncs without clicking Sync now, then returns
+  to the library.
+- `dns-sd -B _cprec._tcp` (macOS) or the desktop's
+  `cargo run --example discover_cli` lists the device only while in sync
+  mode.
+- Press `S` with the desktop app closed: sync mode ends by itself after
+  10 minutes.
+- Plug USB into a computer: the header shows `USB`. Record a clip, leave the
+  device idle 15 s: auto-sync starts, shows `AUTO SYNC`, and ends after the
+  desktop syncs (or after 3 minutes with no desktop).
+- After an auto-sync, it does not start again for 10 minutes. `Esc` during
+  an auto-sync stops it until USB is unplugged and replugged.
+- Wall charger (no data): check whether the voltage rule (4.15 V) triggers
+  auto-sync on a nearly full battery; note how long a charge takes to reach
+  it.
+- Turn Auto-Sync Charging off: no automatic start.
+
 Automated builds cannot verify acoustic quality, SD hot removal, speaker
 routing, or battery calibration.

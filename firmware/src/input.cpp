@@ -74,6 +74,10 @@ InputEvent InputController::poll()
             case 'R':
                 event.record = true;
                 break;
+            case 's':
+            case 'S':
+                event.sync = true;
+                break;
             default:
                 break;
         }

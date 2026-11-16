@@ -19,6 +19,7 @@ struct InputEvent {
     bool deletePressed = false;
     bool settings = false;
     bool help = false;
+    bool sync = false;
     char primaryKey = '\0';
     String text;
 };

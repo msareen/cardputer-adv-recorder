@@ -56,6 +56,7 @@ void RecorderApp::deleteSelected()
         setError("Could not delete recording.");
         return;
     }
+    syncNoteDeleted(filename);
     message_ = "Deleted " + filename;
     deleteConfirm_ = false;
     deleteConfirmName_ = "";
@@ -312,6 +313,7 @@ void RecorderApp::commitRename()
         setError("Could not rename recording.");
         return;
     }
+    syncNoteRenamed(renameOriginalName_, targetName);
     if (wasLocked) {
         auto found = std::find(lockedFiles_.begin(), lockedFiles_.end(),
                                renameOriginalName_);

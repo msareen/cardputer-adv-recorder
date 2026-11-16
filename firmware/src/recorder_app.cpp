@@ -15,6 +15,10 @@ void RecorderApp::begin()
     audio_.begin();
     power_.begin();
     loadSettings();
+    if (!identity_.begin()) {
+        Serial.println("[RECORDER] Device identity unavailable.");
+    }
+    peerStore_.load(peer_);
     updateBattery(true);
     auto& display = M5Cardputer.Display;
     display.setRotation(1);
@@ -30,6 +34,7 @@ void RecorderApp::begin()
         setError("Insert a writable microSD card.");
     } else {
         scanFiles();
+        refreshUnsyncedCount();
         message_ = "Hold G0 for settings.";
     }
     draw();
@@ -53,6 +58,12 @@ void RecorderApp::update()
         serviceSaving();
     } else if (state_ == State::kPlaying) {
         servicePlayback();
+    } else if (state_ == State::kSyncing) {
+        serviceSync();
+    } else if (state_ == State::kPairing) {
+        servicePairing();
+    } else if (state_ == State::kBrowsing) {
+        serviceAutoSync();
     }
 
     draw();
@@ -84,6 +95,14 @@ void RecorderApp::handleInput(const InputEvent& event)
         return;
     }
     if (state_ == State::kSaving) {
+        return;
+    }
+    if (state_ == State::kSyncing) {
+        handleSyncInput(event);
+        return;
+    }
+    if (state_ == State::kPairing) {
+        handlePairingInput(event);
         return;
     }
     if (state_ == State::kSettings) {
@@ -175,6 +194,8 @@ void RecorderApp::handleInput(const InputEvent& event)
         beginRenameSelected();
     } else if (event.record) {
         startRecording();
+    } else if (event.sync) {
+        startSync();
     } else if (event.confirm && !files_.empty()) {
         startPlayback();
     } else if (event.deletePressed && !files_.empty()) {
@@ -235,6 +256,13 @@ void RecorderApp::setError(const String& message)
         stopRecording(false);
     } else if (state_ == State::kPlaying) {
         stopPlayback();
+    } else if (state_ == State::kSyncing) {
+        syncServer_.end();
+        wifi_.end();
+    } else if (state_ == State::kPairing) {
+        resetPairSession();
+        ble_.end();
+        wifi_.end();
     }
     state_ = State::kError;
     message_ = message;

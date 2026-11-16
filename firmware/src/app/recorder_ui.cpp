@@ -9,7 +9,8 @@ void RecorderApp::draw()
     const unsigned long now = millis();
     const bool active =
         state_ == State::kRecording || state_ == State::kSaving ||
-        state_ == State::kPlaying;
+        state_ == State::kPlaying || state_ == State::kSyncing ||
+        state_ == State::kPairing;
     if (!forceRedraw_ &&
         (!active || now - lastDrawMs_ < kActiveDrawIntervalMs)) {
         return;
@@ -51,10 +52,29 @@ void RecorderApp::draw()
         display.print("--%");
     }
 
+    // Sync status: USB power and recordings not yet on the desktop.
+    if (peer_.paired || externalPower_) {
+        String status = externalPower_ ? "USB " : "";
+        if (peer_.paired) {
+            status += libraryUnsynced_ > 0
+                          ? String(static_cast<unsigned long>(
+                                libraryUnsynced_)) +
+                                " new"
+                          : String("synced");
+        }
+        display.setTextColor(muted, panel);
+        display.setCursor(104, 8);
+        display.print(status);
+    }
+
     display.setTextDatum(top_right);
     display.setTextFont(1);
     display.setTextColor(accent, panel);
     const char* pageLabel =
+        state_ == State::kSyncing ? "SYNC" :
+        state_ == State::kPairing ? "PAIR" :
+        (state_ == State::kSettings &&
+         settingsPage_ == SettingsPage::kSync) ? "SYNC SETUP" :
         state_ == State::kRecording
             ? "RECORDING"
             : (state_ == State::kSaving
@@ -187,12 +207,18 @@ void RecorderApp::draw()
             settingsPage_ == SettingsPage::kScreenSaver;
         const char* mainLabels[kSettingsCount] = {
             "Brightness", "Screen Saver", "Low Battery Save",
-            "Seek Step", "Reset to Default", "Version"};
+            "Seek Step", "Sync", "Reset to Default", "Version"};
+        const char* syncLabels[kSyncSettingsCount] = {
+            "Pair with Desktop", "Paired With", "WiFi",
+            "Delete After Sync", "Auto-Sync Charging", "Forget Pairing"};
+        const bool syncPage = settingsPage_ == SettingsPage::kSync;
         const char* screenSaverLabels[kScreenSaverSettingsCount] = {
             "When Home", "While Recording", "While Playing",
             "Triple-Press Wake"};
         const std::uint8_t settingCount =
-            screenSaverPage ? kScreenSaverSettingsCount : kSettingsCount;
+            screenSaverPage ? kScreenSaverSettingsCount
+                            : (syncPage ? kSyncSettingsCount
+                                        : kSettingsCount);
         int first = static_cast<int>(selectedSetting_) - 1;
         if (first < 0) {
             first = 0;
@@ -213,8 +239,10 @@ void RecorderApp::draw()
             display.setTextColor(selected ? TFT_WHITE : muted,
                                  selected ? selectedPanel : background);
             display.setCursor(10, y + 3);
-            display.print(screenSaverPage ? screenSaverLabels[index]
-                                          : mainLabels[index]);
+            display.print(screenSaverPage
+                              ? screenSaverLabels[index]
+                              : (syncPage ? syncLabels[index]
+                                          : mainLabels[index]));
             display.setTextDatum(middle_right);
             display.drawString(settingValueText(index),
                                display.width() - 10, y + 8);
@@ -224,17 +252,28 @@ void RecorderApp::draw()
         display.setTextFont(1);
         display.setTextColor(accent, panel);
         display.setCursor(8, 120);
-        if (!screenSaverPage && selectedSetting_ == 4) {
+        if (syncPage && selectedSetting_ == kSyncSettingPair) {
+            display.print("ENTER pair");
+        } else if (syncPage && selectedSetting_ == kSyncSettingForget) {
+            display.print(forgetConfirm_ ? "ENTER forget" : "ENTER confirm");
+        } else if (syncPage &&
+                   selectedSetting_ != kSyncSettingDeleteAfterSync &&
+                   selectedSetting_ != kSyncSettingAutoSync) {
+            display.print("SET FROM DESKTOP");
+        } else if (!screenSaverPage && !syncPage &&
+                   selectedSetting_ == kSettingReset) {
             display.print(resetSettingsConfirm_ ? "ENTER reset"
                                                 : "ENTER confirm");
-        } else if (!screenSaverPage && selectedSetting_ == 5) {
+        } else if (!screenSaverPage && !syncPage &&
+                   selectedSetting_ == kSettingVersion) {
             display.print("VERSION");
         } else {
             display.print("LEFT/RIGHT value");
         }
         display.setTextDatum(top_right);
         display.setTextColor(muted, panel);
-        display.drawString(screenSaverPage ? "ESC BACK" : "ESC SAVE",
+        display.drawString(screenSaverPage || syncPage ? "ESC BACK"
+                                                       : "ESC SAVE",
                            display.width() - 8, 120);
         display.setTextDatum(top_left);
     } else if (state_ == State::kRename) {
@@ -266,7 +305,7 @@ void RecorderApp::draw()
         const char* titles[] = {
             "Library", "Manage", "Recording", "Playback", "System"};
         const char* rows[][4] = {
-            {"R  record", "ENTER  play", "UP/DOWN  select", ""},
+            {"R  record", "ENTER  play", "UP/DOWN  select", "S  sync"},
             {"LEFT  lock", "RIGHT  rename", "DELETE  delete", ""},
             {"ENTER  save", "ESC / R  save", "G0  screen saver", ""},
             {"ENTER  pause", "ESC  stop", "LEFT/RIGHT seek",
@@ -318,6 +357,10 @@ void RecorderApp::draw()
         display.setTextColor(accent, background);
         display.setCursor(8, 116);
         display.print("ENTER retry storage");
+    } else if (state_ == State::kSyncing) {
+        drawSyncScreen();
+    } else if (state_ == State::kPairing) {
+        drawPairingScreen();
     } else {
         const String detail = selectedRecordingDetail();
         if (files_.empty()) {

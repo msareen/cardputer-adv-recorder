@@ -57,23 +57,74 @@ esptool.py --chip esp32s3 --baud 460800 write_flash \
   0x0000 cardputer-adv-recorder-vX.Y.Z.bin
 ```
 
-The serial monitor runs at 115200 baud. To run host-side tests:
+The serial monitor runs at 115200 baud. To run host-side tests (needs a host
+`gcc`/`g++` on `PATH`; on Windows, MinGW-w64 installed in a path without
+spaces):
 
 ```sh
 platformio test -e native-tests
 ```
 
+## Sync with the desktop app
+
+**Pair once.** Hold `G0` for settings, open `Sync`, choose `Pair with
+Desktop`. The device scans WiFi networks, then advertises over Bluetooth for
+two minutes. In the desktop app choose Devices > Pair new device. Both
+screens show a six-digit code; if they match, press `Enter` on the Cardputer
+and click Codes match on the desktop. The desktop then sends your WiFi
+network and password over the encrypted Bluetooth link, and the device tests
+it once. One desktop owns the device; pairing another replaces it.
+
+**Sync.** Press `S` in the library. The device joins the paired WiFi,
+serves the `/v1` protocol over HTTPS on port 8443 with mutual TLS (it only
+answers the paired desktop, and the desktop only trusts this device's key),
+and announces itself as `_cprec._tcp.local` so the desktop finds it without
+an address. With auto-sync on in the desktop app, the sync then runs by
+itself. `Esc` leaves sync mode; the desktop ends it when a sync finishes, and
+it ends on its own after 3 minutes (auto) or 10 minutes (`S`) with no
+desktop. Bluetooth and WiFi are off in every other state.
+
+**Auto-sync when charging** (Settings > Sync, default on): when the device
+is idle in the library on external power, paired, and has recordings the
+desktop does not have, it starts sync mode by itself. The Cardputer ADV has
+no charge-status signal, so "external power" means a computer on the USB port
+or a battery at charging voltage (4.15 V and up). After any sync it waits 10
+minutes before trying again; `Esc` stops it until the device is unplugged.
+The library header shows `USB` on external power and how many recordings are
+new (or `synced`).
+
+`Sync` settings: Pair with Desktop, Paired With, WiFi (set from the desktop:
+Devices > Change WiFi, with the device in pairing mode), Delete After Sync,
+Auto-Sync Charging, and Forget Pairing (press `Enter` twice; wipes the peer, WiFi credentials and
+sync acks). Protocol details: [`../docs/ble-protocol.md`](../docs/ble-protocol.md).
+
+Every new recording carries a `cprc` RIFF chunk (random 128-bit recording id,
+device id, start time) before `data`; other players skip it. Older files get
+an id derived from name, size and SD timestamp. Ids, cached hashes and acks
+are kept in `RECORDER.SYN` on the card. The device id comes from a P-256 key
+pair generated on first boot and stored in NVS. Serial output logs free heap
+and per-file transfer speed during sync.
+
 ## Project layout
 
-- `src/app`: recorder state flow, UI, settings, screen saver, and file browser.
-- `src/hardware`: Cardputer ADV board, audio, power, and microSD services.
-- `src/media`: WAV parsing, writing, and recording filename helpers.
+- `src/app`: recorder state flow, UI, settings, screen saver, file browser,
+  and the sync and pairing screens (`sync_flow.cpp`, `pairing_flow.cpp`).
+- `src/hardware`: Cardputer ADV board, audio, power, microSD, WiFi and BLE
+  (NimBLE) services.
+- `src/media`: WAV parsing, writing, the `cprc` chunk, and recording filename
+  helpers.
+- `src/sync`: sync index, `/v1` encoding, SHA-256, CBOR, pairing math, device
+  identity (P-256 key, TLS certificate), peer store, AES-GCM channel, and the
+  HTTPS server. The pure parts are host-tested (`test_sync`,
+  `test_pairing`).
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
 | `R` | Start recording |
+| `S` in library | Start sync mode (after pairing) |
+| `Esc` in sync mode | Stop syncing |
 | `H` in library | Open help |
 | `Enter`, `Esc`, or `R` | Stop and save a recording |
 | Up/Down key positions (`;` / `.`) | Select a recording |
@@ -107,6 +158,8 @@ applied immediately. Screen saver options are grouped under `Screen Saver`:
 | Brightness | 10% through 100%, in 10% steps |
 | Low Battery Save | Off, 1%, 5%, 10% |
 | Seek Step | 5 sec, 10 sec, 20 sec, 60 sec |
+| Sync | Pair with Desktop, Paired With, WiFi, Delete After Sync, Auto-Sync Charging, Forget Pairing (see Sync above) |
+| Sync / Delete After Sync | Off (default), On. Deletes a file after the desktop's verified ack; never deletes locked files |
 | Reset to Default | Restores saved settings after confirmation |
 | Version | Current firmware version |
 | Screen Saver / When Home | Off, Dimmed Standby, Black |

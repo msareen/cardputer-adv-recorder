@@ -1,50 +1,168 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import {
+  api,
+  errorText,
+  onPresenceChanged,
+  onSyncFinished,
+  onSyncProgress,
+  onSyncStarted,
+  type Device,
+  type Recording,
+  type SyncEvent,
+  type SyncReport,
+  type User,
+} from "./api";
+import { Devices } from "./Devices";
+import { Library } from "./Library";
+import { Login } from "./Login";
+import { Settings } from "./Settings";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+type Page = "library" | "devices" | "settings";
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+function App() {
+  const [user, setUser] = useState<User | null | undefined>(undefined);
+  const [page, setPage] = useState<Page>("library");
+  const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [playing, setPlaying] = useState<Recording | null>(null);
+  const [syncing, setSyncing] = useState<Set<string>>(new Set());
+  const [progress, setProgress] = useState<Record<string, SyncEvent | undefined>>({});
+  const [results, setResults] = useState<
+    Record<string, { report?: SyncReport; error?: string; automatic?: boolean } | undefined>
+  >({});
+  const [present, setPresent] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    api.session().then(setUser);
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const [r, d] = await Promise.all([api.listRecordings(), api.listDevices()]);
+    setRecordings(r);
+    setDevices(d);
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      refresh();
+      api.presentDevices().then((ids) => setPresent(new Set(ids)));
+    }
+  }, [user, refresh]);
+
+  // Syncs can start in the background (discovery worker), so the UI follows
+  // events rather than only the calls it made itself.
+  useEffect(() => {
+    const subscriptions = [
+      onSyncStarted((e) => {
+        setSyncing((s) => new Set(s).add(e.deviceId));
+        setProgress((p) => ({ ...p, [e.deviceId]: undefined }));
+        setResults((r) => ({ ...r, [e.deviceId]: undefined }));
+      }),
+      onSyncFinished((e) => {
+        setSyncing((s) => {
+          const next = new Set(s);
+          next.delete(e.deviceId);
+          return next;
+        });
+        setResults((r) => ({
+          ...r,
+          [e.deviceId]: { report: e.report ?? undefined, error: e.error ?? undefined, automatic: e.automatic },
+        }));
+        refresh();
+      }),
+      onPresenceChanged((ids) => {
+        setPresent(new Set(ids));
+        refresh();
+      }),
+    ];
+    return () => {
+      subscriptions.forEach((s) => s.then((f) => f()));
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    const unlisten = onSyncProgress((p) => {
+      setProgress((prev) => ({ ...prev, [p.deviceId]: p.event }));
+      if (p.event.phase === "saved") refresh();
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [refresh]);
+
+  const sync = useCallback(async (deviceId: string) => {
+    try {
+      await api.syncDevice(deviceId);
+    } catch (e) {
+      // Errors after the sync started arrive as sync-finished; this covers
+      // ones before it (no address, already syncing).
+      setResults((r) => (r[deviceId] ? r : { ...r, [deviceId]: { error: errorText(e) } }));
+    }
+  }, []);
+
+  if (user === undefined) return null;
+  if (user === null) return <Login onLoggedIn={setUser} />;
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div className="shell">
+      <nav className="sidebar">
+        <div className="brand">
+          <span className="brand-dot" />
+          Cardputer Sync
+        </div>
+        {(["library", "devices", "settings"] as Page[]).map((p) => (
+          <button key={p} className={`nav ${page === p ? "current" : ""}`} onClick={() => setPage(p)}>
+            {p[0].toUpperCase() + p.slice(1)}
+            {p === "devices" && syncing.size > 0 && <span className="pulse" />}
+          </button>
+        ))}
+        <div className="sidebar-foot">
+          <div className="muted">{user.username}</div>
+          <button
+            className="link"
+            onClick={async () => {
+              await api.logout();
+              setPlaying(null);
+              setRecordings([]);
+              setDevices([]);
+              setUser(null);
+            }}
+          >
+            Log out
+          </button>
+        </div>
+      </nav>
+      <main className="content">
+        {page === "library" && (
+          <Library
+            recordings={recordings}
+            playing={playing}
+            onPlay={(r) => setPlaying(playing?.id === r.id && playing.deviceId === r.deviceId ? null : r)}
+            onChanged={refresh}
+          />
+        )}
+        {page === "devices" && (
+          <Devices
+            devices={devices}
+            progress={progress}
+            syncing={syncing}
+            present={present}
+            results={results}
+            onSync={sync}
+            onChanged={refresh}
+          />
+        )}
+        {page === "settings" && <Settings user={user} onUser={setUser} />}
+      </main>
+      {playing && (
+        <footer className="player">
+          <div className="player-title">{playing.displayName ?? playing.name}</div>
+          <audio key={playing.path} src={convertFileSrc(playing.path)} controls autoPlay onEnded={() => setPlaying(null)} />
+        </footer>
+      )}
+    </div>
   );
 }
 

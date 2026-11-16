@@ -11,6 +11,7 @@ use axum::{
     Json, Router,
 };
 use clap::{Parser, ValueEnum};
+use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -49,6 +50,10 @@ struct Args {
     delete_after_sync: bool,
     #[arg(long, default_value = "0123456789abcdef")]
     device_id: String,
+    /// Announce _cprec._tcp.local (TXT id=<device id>) on loopback, like a
+    /// device in sync mode, so the desktop's discovery worker finds it.
+    #[arg(long)]
+    mdns: bool,
 }
 
 struct Inner {
@@ -222,14 +227,21 @@ async fn download(State(a): State<App>, Path(id): Path<String>, headers: HeaderM
     };
     let slice = &data[start as usize..=end as usize];
     let declared = slice.len();
-    let chunks: Vec<Result<Bytes, std::io::Error>> = if a.args.fault == Fault::DropMid {
+    let body = if a.args.fault == Fault::DropMid {
         // Send half, then fail, while Content-Length promises the full body.
-        vec![
-            Ok(Bytes::copy_from_slice(&slice[..declared / 2])),
-            Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "mock drop")),
-        ]
+        // The pause lets hyper flush the headers and the first half before
+        // the error resets the connection; without it nothing is sent.
+        let half = Bytes::copy_from_slice(&slice[..declared / 2]);
+        let first = futures_util::stream::iter([Ok::<_, std::io::Error>(half)]);
+        let fail = futures_util::stream::once(async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "mock drop"))
+        });
+        Body::from_stream(first.chain(fail))
     } else {
-        slice.chunks(32 * 1024).map(|c| Ok(Bytes::copy_from_slice(c))).collect()
+        let chunks: Vec<Result<Bytes, std::io::Error>> =
+            slice.chunks(32 * 1024).map(|c| Ok(Bytes::copy_from_slice(c))).collect();
+        Body::from_stream(futures_util::stream::iter(chunks))
     };
     let mut resp = Response::builder()
         .status(status)
@@ -239,7 +251,7 @@ async fn download(State(a): State<App>, Path(id): Path<String>, headers: HeaderM
     if status == StatusCode::PARTIAL_CONTENT {
         resp = resp.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));
     }
-    resp.body(Body::from_stream(futures_util::stream::iter(chunks))).unwrap()
+    resp.body(body).unwrap()
 }
 
 fn file_sha(rec: &Rec) -> Option<String> {
@@ -299,12 +311,31 @@ async fn done() -> Response {
     StatusCode::NO_CONTENT.into_response()
 }
 
+fn announce(device_id: &str, port: u16) -> mdns_sd::ServiceDaemon {
+    let daemon = mdns_sd::ServiceDaemon::new().expect("mDNS daemon");
+    let _ = daemon.enable_interface(mdns_sd::IfKind::LoopbackV4);
+    let info = mdns_sd::ServiceInfo::new(
+        "_cprec._tcp.local.",
+        &format!("cprec-{device_id}"),
+        &format!("cprec-{device_id}.local."),
+        "127.0.0.1",
+        port,
+        &[("id", device_id), ("v", "1")][..],
+    )
+    .expect("service info");
+    daemon.register(info).expect("mDNS register");
+    println!("announcing _cprec._tcp.local id={device_id}");
+    daemon
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
     std::fs::create_dir_all(&args.dir).ok();
     let addr = format!("127.0.0.1:{}", args.port);
     println!("mock-device on http://{addr}  dir={:?}  fault={:?}", args.dir, args.fault);
+    // Kept alive for the life of the process.
+    let _mdns = args.mdns.then(|| announce(&args.device_id, args.port));
     let app = App {
         args: Arc::new(args),
         inner: Arc::new(Mutex::new(Inner {

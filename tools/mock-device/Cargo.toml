@@ -12,3 +12,4 @@ serde_json = "1"
 sha2 = "0.10"
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
+mdns-sd = "0.21"

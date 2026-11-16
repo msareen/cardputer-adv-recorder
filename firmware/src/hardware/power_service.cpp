@@ -1,6 +1,9 @@
 #include "recorder/hardware/power_service.h"
 
 #include <M5Cardputer.h>
+#if ARDUINO_USB_MODE
+#include <HWCDC.h>
+#endif
 
 namespace cardputer_recorder {
 
@@ -35,6 +38,17 @@ BatteryReading PowerService::readBattery()
         error_ = ErrorCode::kNone;
     }
     return reading;
+}
+
+bool PowerService::externalPowerLikely(const BatteryReading& battery) const
+{
+#if ARDUINO_USB_MODE
+    if (HWCDC::isPlugged()) {
+        return true;
+    }
+#endif
+    constexpr int kChargingVoltageMv = 4150;
+    return battery.valid && battery.voltageMv >= kChargingVoltageMv;
 }
 
 ServiceState PowerService::state() const

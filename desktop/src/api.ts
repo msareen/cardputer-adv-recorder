@@ -1,0 +1,155 @@
+// Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+export interface User {
+  id: number;
+  username: string;
+  libraryPath: string;
+  autoSync: boolean;
+}
+
+export interface AppSettings {
+  autoSync: boolean;
+  stayLoggedIn: boolean;
+  startAtLogin: boolean;
+}
+
+export interface SyncStarted {
+  deviceId: string;
+  automatic: boolean;
+}
+
+export interface SyncFinished {
+  deviceId: string;
+  automatic: boolean;
+  report: SyncReport | null;
+  error: string | null;
+}
+
+export interface Device {
+  id: string;
+  name: string;
+  address: string | null;
+  lastCursor: number;
+  lastSeenMs: number | null;
+  firmware: string | null;
+  batteryPct: number | null;
+  unsynced: number | null;
+  freeBytes: number | null;
+  /** Paired over Bluetooth: synced over HTTPS pinned to its key. */
+  paired: boolean;
+}
+
+export interface NearbyDevice {
+  deviceId: string;
+  name: string;
+  pairing: boolean;
+  hasPeer: boolean;
+  rssi: number | null;
+}
+
+export interface PairStart {
+  deviceId: string;
+  code: string | null;
+  known: boolean;
+}
+
+export interface PairOutcome {
+  device: Device;
+  wifi: { ok: boolean; ip: string | null };
+}
+
+export interface Recording {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  name: string;
+  displayName: string | null;
+  size: number;
+  sha256: string;
+  createdMs: number;
+  durationMs: number;
+  path: string;
+  syncedAtMs: number;
+  acked: boolean;
+  onDevice: boolean;
+}
+
+export interface SyncReport {
+  deviceId: string;
+  downloaded: number;
+  renamed: number;
+  reacked: number;
+  deletedOnDevice: number;
+  failed: string[];
+  cursor: number;
+}
+
+export type SyncEvent =
+  | { phase: "connected"; deviceId: string; deviceName: string; firmware: string }
+  | { phase: "listed"; count: number }
+  | { phase: "downloading"; index: number; count: number; name: string; done: number; total: number }
+  | { phase: "verifying"; index: number; count: number; name: string }
+  | { phase: "saved"; index: number; count: number; name: string }
+  | { phase: "fileFailed"; name: string; message: string };
+
+export interface SyncProgress {
+  deviceId: string;
+  event: SyncEvent;
+}
+
+export const api = {
+  session: () => invoke<User | null>("session"),
+  createAccount: (username: string, password: string) =>
+    invoke<User>("create_account", { username, password }),
+  login: (username: string, password: string) => invoke<User>("login", { username, password }),
+  logout: () => invoke<void>("logout"),
+  setLibraryPath: (path: string) => invoke<User>("set_library_path", { path }),
+  appSettings: () => invoke<AppSettings>("app_settings"),
+  setAutoSync: (enabled: boolean) => invoke<void>("set_auto_sync", { enabled }),
+  setStayLoggedIn: (enabled: boolean) => invoke<void>("set_stay_logged_in", { enabled }),
+  setStartAtLogin: (enabled: boolean) => invoke<void>("set_start_at_login", { enabled }),
+  presentDevices: () => invoke<string[]>("present_devices"),
+
+  listDevices: () => invoke<Device[]>("list_devices"),
+  addDevice: (address: string) => invoke<Device>("add_device", { address }),
+  renameDevice: (deviceId: string, name: string) => invoke<void>("rename_device", { deviceId, name }),
+  setDeviceAddress: (deviceId: string, address: string) =>
+    invoke<void>("set_device_address", { deviceId, address }),
+  removeDevice: (deviceId: string) => invoke<void>("remove_device", { deviceId }),
+  syncDevice: (deviceId: string) => invoke<SyncReport>("sync_device", { deviceId }),
+
+  bleScan: () => invoke<NearbyDevice[]>("ble_scan"),
+  pairStart: (deviceId: string) => invoke<PairStart>("pair_start", { deviceId }),
+  pairReady: () => invoke<string[]>("pair_ready"),
+  pairFinish: (ssid: string, password: string) => invoke<PairOutcome>("pair_finish", { ssid, password }),
+  pairCancel: () => invoke<void>("pair_cancel"),
+
+  listRecordings: () => invoke<Recording[]>("list_recordings"),
+  renameRecording: (deviceId: string, id: string, name: string) =>
+    invoke<void>("rename_recording", { deviceId, id, name }),
+  deleteFromDevice: (deviceId: string, id: string) =>
+    invoke<void>("delete_from_device", { deviceId, id }),
+};
+
+export function onSyncProgress(handler: (p: SyncProgress) => void): Promise<UnlistenFn> {
+  return listen<SyncProgress>("sync-progress", (e) => handler(e.payload));
+}
+
+export function onSyncStarted(handler: (e: SyncStarted) => void): Promise<UnlistenFn> {
+  return listen<SyncStarted>("sync-started", (e) => handler(e.payload));
+}
+
+export function onSyncFinished(handler: (e: SyncFinished) => void): Promise<UnlistenFn> {
+  return listen<SyncFinished>("sync-finished", (e) => handler(e.payload));
+}
+
+/** Device ids announcing sync mode on the LAN. */
+export function onPresenceChanged(handler: (ids: string[]) => void): Promise<UnlistenFn> {
+  return listen<string[]>("presence-changed", (e) => handler(e.payload));
+}
+
+export function errorText(e: unknown): string {
+  return typeof e === "string" ? e : e instanceof Error ? e.message : JSON.stringify(e);
+}

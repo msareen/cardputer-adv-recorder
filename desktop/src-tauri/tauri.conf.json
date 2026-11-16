@@ -14,11 +14,17 @@
       {
         "title": "Cardputer Sync",
         "width": 1000,
-        "height": 700
+        "height": 700,
+        "visible": false,
+        "label": "main"
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
     }
   },
   "bundle": {

@@ -6,6 +6,7 @@ namespace cardputer_recorder {
 
 void RecorderApp::openSettings()
 {
+    forgetConfirm_ = false;
     selectedSetting_ = 0;
     settingsPage_ = SettingsPage::kMain;
     resetSettingsConfirm_ = false;
@@ -29,9 +30,18 @@ void RecorderApp::handleSettingsInput(const InputEvent& event)
             forceRedraw_ = true;
             return;
         }
-        if (settingsPage_ == SettingsPage::kScreenSaver) {
+        if (forgetConfirm_) {
+            forgetConfirm_ = false;
+            message_ = "Forget canceled.";
+            forceRedraw_ = true;
+            return;
+        }
+        if (settingsPage_ == SettingsPage::kScreenSaver ||
+            settingsPage_ == SettingsPage::kSync) {
+            selectedSetting_ = settingsPage_ == SettingsPage::kSync
+                                   ? kSettingSync
+                                   : 1;
             settingsPage_ = SettingsPage::kMain;
-            selectedSetting_ = 1;
             forceRedraw_ = true;
             return;
         }
@@ -41,7 +51,11 @@ void RecorderApp::handleSettingsInput(const InputEvent& event)
     const std::uint8_t settingCount =
         settingsPage_ == SettingsPage::kScreenSaver
             ? kScreenSaverSettingsCount
-            : kSettingsCount;
+            : (settingsPage_ == SettingsPage::kSync ? kSyncSettingsCount
+                                                    : kSettingsCount);
+    if (event.up || event.down) {
+        forgetConfirm_ = false;
+    }
     if (event.up) {
         resetSettingsConfirm_ = false;
         selectedSetting_ =
@@ -53,10 +67,18 @@ void RecorderApp::handleSettingsInput(const InputEvent& event)
         forceRedraw_ = true;
     } else if (event.right || event.confirm) {
         if (settingsPage_ == SettingsPage::kMain &&
-            selectedSetting_ == 1) {
-            settingsPage_ = SettingsPage::kScreenSaver;
+            (selectedSetting_ == 1 || selectedSetting_ == kSettingSync)) {
+            settingsPage_ = selectedSetting_ == 1
+                                ? SettingsPage::kScreenSaver
+                                : SettingsPage::kSync;
             selectedSetting_ = 0;
             forceRedraw_ = true;
+            return;
+        }
+        if (settingsPage_ == SettingsPage::kSync &&
+            selectedSetting_ == kSyncSettingPair) {
+            saveSettings();
+            openPairing();
             return;
         }
         cycleSelectedSetting(1);
@@ -91,6 +113,28 @@ void RecorderApp::cycleSelectedSetting(int offset)
             saveSettings();
             forceRedraw_ = true;
         }
+        return;
+    }
+
+    if (settingsPage_ == SettingsPage::kSync) {
+        if (selectedSetting_ == kSyncSettingDeleteAfterSync) {
+            settings_.deleteAfterSync = !settings_.deleteAfterSync;
+            saveSettings();
+        } else if (selectedSetting_ == kSyncSettingAutoSync) {
+            settings_.autoSyncWhenCharging = !settings_.autoSyncWhenCharging;
+            saveSettings();
+        } else if (selectedSetting_ == kSyncSettingForget && offset > 0 &&
+                   peer_.paired) {
+            // A physical second press, as the architecture doc requires.
+            if (forgetConfirm_) {
+                forgetConfirm_ = false;
+                forgetPairing();
+            } else {
+                forgetConfirm_ = true;
+                message_ = "Press Enter again to forget.";
+            }
+        }
+        forceRedraw_ = true;
         return;
     }
 
@@ -142,7 +186,9 @@ void RecorderApp::cycleSelectedSetting(int offset)
             settings_.seekStepSeconds = values[index];
             break;
         }
-        case 4:
+        case kSettingSync:
+            break;
+        case kSettingReset:
             if (resetSettingsConfirm_) {
                 resetSettingsToDefault();
             } else if (offset > 0) {
@@ -150,7 +196,7 @@ void RecorderApp::cycleSelectedSetting(int offset)
                 message_ = "Press Enter again to reset.";
             }
             break;
-        case 5:
+        case kSettingVersion:
             break;
         default:
             break;
@@ -186,6 +232,10 @@ void RecorderApp::loadSettings()
         preferences_.getBool("vad", settings_.vadEnabled);
     settings_.triplePressWake =
         preferences_.getBool("triple_wake", settings_.triplePressWake);
+    settings_.deleteAfterSync =
+        preferences_.getBool("del_sync", settings_.deleteAfterSync);
+    settings_.autoSyncWhenCharging =
+        preferences_.getBool("auto_sync", settings_.autoSyncWhenCharging);
 
     if (settings_.brightnessPercent < 10 ||
         settings_.brightnessPercent > 100) {
@@ -223,6 +273,8 @@ void RecorderApp::saveSettings()
     preferences_.putUChar("seek_step", settings_.seekStepSeconds);
     preferences_.putBool("vad", settings_.vadEnabled);
     preferences_.putBool("triple_wake", settings_.triplePressWake);
+    preferences_.putBool("del_sync", settings_.deleteAfterSync);
+    preferences_.putBool("auto_sync", settings_.autoSyncWhenCharging);
 }
 void RecorderApp::applyBrightness()
 {
@@ -232,6 +284,29 @@ void RecorderApp::applyBrightness()
 }
 String RecorderApp::settingValueText(std::uint8_t index) const
 {
+    if (settingsPage_ == SettingsPage::kSync) {
+        switch (index) {
+            case kSyncSettingPair:
+                return ">";
+            case kSyncSettingPeer:
+                return peer_.paired ? (peer_.hostName.empty()
+                                           ? String("Yes")
+                                           : String(peer_.hostName.c_str()))
+                                    : String("None");
+            case kSyncSettingWifi:
+                return peer_.wifiSsid.empty()
+                           ? String("Not set")
+                           : String(peer_.wifiSsid.c_str());
+            case kSyncSettingDeleteAfterSync:
+                return settings_.deleteAfterSync ? "ON" : "OFF";
+            case kSyncSettingAutoSync:
+                return settings_.autoSyncWhenCharging ? "ON" : "OFF";
+            case kSyncSettingForget:
+                return forgetConfirm_ ? "CONFIRM?" : "";
+            default:
+                return "";
+        }
+    }
     if (settingsPage_ == SettingsPage::kScreenSaver) {
         switch (index) {
             case 0:
@@ -256,9 +331,11 @@ String RecorderApp::settingValueText(std::uint8_t index) const
             return lowBatterySaveText(settings_.lowBatterySavePercent);
         case 3:
             return seekStepText(settings_.seekStepSeconds);
-        case 4:
+        case kSettingSync:
+            return ">";
+        case kSettingReset:
             return resetSettingsConfirm_ ? "CONFIRM?" : "";
-        case 5:
+        case kSettingVersion:
             return kAppVersion;
         default:
             return "";

@@ -1,6 +1,7 @@
 #include "recorder/media/wav_file.h"
 
 #include <cerrno>
+#include <cstring>
 #include <unistd.h>
 
 namespace cardputer_recorder {
@@ -45,9 +46,35 @@ bool WavWriter::begin(File&& file, const WavSpec& spec)
     return beginStreaming(std::move(file), spec);
 }
 
+std::size_t WavWriter::encodeHeader(std::uint8_t* destination,
+                                    bool streaming,
+                                    std::uint32_t dataSize) const
+{
+    if (hasIdentity_) {
+        if (streaming) {
+            encodeStreamingRecordingWavHeader(destination, spec_, identity_);
+        } else {
+            encodeRecordingWavHeader(destination, spec_, dataSize, identity_);
+        }
+        return kRecordingWavHeaderSize;
+    }
+    if (streaming) {
+        encodeStreamingPcmWavHeader(destination, spec_);
+    } else {
+        encodePcmWavHeader(destination, spec_, dataSize);
+    }
+    return kPcmWavHeaderSize;
+}
+
+std::size_t WavWriter::headerSize() const
+{
+    return hasIdentity_ ? kRecordingWavHeaderSize : kPcmWavHeaderSize;
+}
+
 bool WavWriter::beginStreaming(File&& file, const WavSpec& spec)
 {
     abort();
+    hasIdentity_ = false;
     if (!file || spec.channels != 1 || spec.bitsPerSample != 16) {
         return false;
     }
@@ -58,9 +85,9 @@ bool WavWriter::beginStreaming(File&& file, const WavSpec& spec)
     lastWriteCompleted_ = 0;
     lastWriteError_ = 0;
     finalizeError_ = WavFinalizeError::kNone;
-    std::uint8_t header[kPcmWavHeaderSize];
-    encodeStreamingPcmWavHeader(header, spec_);
-    if (file_.write(header, sizeof(header)) != sizeof(header)) {
+    std::uint8_t header[kMaxWavHeaderSize];
+    const std::size_t size = encodeHeader(header, true, 0);
+    if (file_.write(header, size) != size) {
         abort();
         return false;
     }
@@ -70,6 +97,21 @@ bool WavWriter::beginStreaming(File&& file, const WavSpec& spec)
 bool WavWriter::beginStreaming(int descriptor, const WavSpec& spec)
 {
     abort();
+    hasIdentity_ = false;
+    return beginDescriptor(descriptor, spec);
+}
+
+bool WavWriter::beginStreaming(int descriptor, const WavSpec& spec,
+                               const RecordingIdentity& identity)
+{
+    abort();
+    identity_ = identity;
+    hasIdentity_ = true;
+    return beginDescriptor(descriptor, spec);
+}
+
+bool WavWriter::beginDescriptor(int descriptor, const WavSpec& spec)
+{
     if (descriptor < 0 || spec.channels != 1 ||
         spec.bitsPerSample != 16) {
         if (descriptor >= 0) {
@@ -86,12 +128,12 @@ bool WavWriter::beginStreaming(int descriptor, const WavSpec& spec)
     lastWriteError_ = 0;
     finalizeError_ = WavFinalizeError::kNone;
 
-    std::uint8_t header[kPcmWavHeaderSize];
-    encodeStreamingPcmWavHeader(header, spec_);
+    std::uint8_t header[kMaxWavHeaderSize];
+    const std::size_t size = encodeHeader(header, true, 0);
     std::size_t completed = 0;
     int writeError = 0;
     if (!writeDescriptorFully(
-            descriptor_, header, sizeof(header), completed,
+            descriptor_, header, size, completed,
             writeError)) {
         lastWriteError_ = writeError;
         abort();
@@ -168,12 +210,12 @@ bool WavWriter::closeData()
             finalizeError_ = WavFinalizeError::kSeek;
             finalized = false;
         } else {
-            std::uint8_t header[kPcmWavHeaderSize];
-            encodePcmWavHeader(header, spec_, dataSize_);
+            std::uint8_t header[kMaxWavHeaderSize];
+            const std::size_t size = encodeHeader(header, false, dataSize_);
             std::size_t completed = 0;
             int writeError = 0;
             if (!writeDescriptorFully(
-                    descriptor, header, sizeof(header), completed,
+                    descriptor, header, size, completed,
                     writeError)) {
                 lastWriteError_ = writeError;
                 finalizeError_ = WavFinalizeError::kHeaderWrite;
@@ -224,12 +266,12 @@ bool WavWriter::finalize()
         return false;
     }
 
-    std::uint8_t header[kPcmWavHeaderSize];
-    encodePcmWavHeader(header, spec_, dataSize_);
+    std::uint8_t header[kMaxWavHeaderSize];
+    const std::size_t headerBytes = encodeHeader(header, false, dataSize_);
     std::size_t written = 0;
-    while (written < sizeof(header)) {
+    while (written < headerBytes) {
         const std::size_t count =
-            file_.write(header + written, sizeof(header) - written);
+            file_.write(header + written, headerBytes - written);
         if (count == 0) {
             finalizeError_ = WavFinalizeError::kHeaderWrite;
             file_.close();
@@ -250,6 +292,7 @@ bool WavWriter::save(File file, const std::int16_t* samples,
                      std::size_t sampleCount, const WavSpec& spec)
 {
     abort();
+    hasIdentity_ = false;
     if (!file || samples == nullptr || sampleCount == 0 ||
         spec.channels != 1 || spec.bitsPerSample != 16) {
         return false;
@@ -337,6 +380,8 @@ bool WavReader::begin(File file)
 {
     end();
     info_ = {};
+    identity_ = {};
+    hasIdentity_ = false;
     error_ = WavError::kNone;
     if (!file || file.size() < kPcmWavHeaderSize) {
         error_ = WavError::kTruncated;
@@ -361,6 +406,31 @@ bool WavReader::begin(File file)
             file_ = file;
             bytesRead_ = 0;
             return true;
+        }
+
+        // Files from this firmware carry a cprc chunk right after "fmt ".
+        // Read the rest of that fixed layout sequentially, again avoiding
+        // a seek, so the file ends up positioned at the audio data.
+        if (hasCprcAfterFormat(fixedHeader, sizeof(fixedHeader)) &&
+            fileSize >= kRecordingWavHeaderSize) {
+            std::uint8_t header[kRecordingWavHeaderSize];
+            std::memcpy(header, fixedHeader, sizeof(fixedHeader));
+            const std::size_t rest =
+                kRecordingWavHeaderSize - sizeof(fixedHeader);
+            if (file.read(header + sizeof(fixedHeader), rest) == rest) {
+                WavInfo recordingInfo;
+                RecordingIdentity identity;
+                if (parseRecordingWavHeader(header, sizeof(header),
+                                            fileSize, recordingInfo,
+                                            identity) == WavError::kNone) {
+                    info_ = recordingInfo;
+                    identity_ = identity;
+                    hasIdentity_ = true;
+                    file_ = file;
+                    bytesRead_ = 0;
+                    return true;
+                }
+            }
         }
     }
 
@@ -427,6 +497,13 @@ bool WavReader::begin(File file)
                 return false;
             }
             formatFound = true;
+        } else if (memcmp(chunk, "cprc", 4) == 0 &&
+                   chunkSize >= kCprcPayloadSize) {
+            std::uint8_t payload[kCprcPayloadSize];
+            if (file.read(payload, sizeof(payload)) == sizeof(payload)) {
+                hasIdentity_ =
+                    decodeCprcPayload(payload, sizeof(payload), identity_);
+            }
         } else if (memcmp(chunk, "data", 4) == 0) {
             info_.dataOffset = payloadOffset;
             info_.dataSize = chunkSize;
@@ -527,6 +604,16 @@ const WavInfo& WavReader::info() const
 WavError WavReader::error() const
 {
     return error_;
+}
+
+bool WavReader::hasIdentity() const
+{
+    return hasIdentity_;
+}
+
+const RecordingIdentity& WavReader::identity() const
+{
+    return identity_;
 }
 
 }  // namespace cardputer_recorder

@@ -17,12 +17,23 @@ constexpr unsigned long kCaptureStartTimeoutMs = 1000;
 constexpr unsigned long kCaptureDrainTimeoutMs = 1000;
 constexpr unsigned long kSaveSettleMs = 750;
 constexpr unsigned long kRecordingStopGuardMs = 500;
-constexpr std::uint8_t kSettingsCount = 6;
+constexpr std::uint8_t kSettingsCount = 7;
+constexpr std::uint8_t kSettingSync = 4;
+constexpr std::uint8_t kSettingReset = 5;
+constexpr std::uint8_t kSettingVersion = 6;
 constexpr std::uint8_t kScreenSaverSettingsCount = 4;
+// Settings > Sync rows.
+constexpr std::uint8_t kSyncSettingsCount = 6;
+constexpr std::uint8_t kSyncSettingPair = 0;
+constexpr std::uint8_t kSyncSettingPeer = 1;
+constexpr std::uint8_t kSyncSettingWifi = 2;
+constexpr std::uint8_t kSyncSettingDeleteAfterSync = 3;
+constexpr std::uint8_t kSyncSettingAutoSync = 4;
+constexpr std::uint8_t kSyncSettingForget = 5;
 constexpr unsigned long kIdleScreenSaverDelayMs = 30000;
 constexpr unsigned long kActiveScreenSaverDelayMs = 15000;
 constexpr std::uint8_t kDimBrightness = 12;
-constexpr const char* kAppVersion = "1.4.0";
+constexpr const char* kAppVersion = "1.5.0-dev";
 
 extern M5Canvas recorderCanvas;
 

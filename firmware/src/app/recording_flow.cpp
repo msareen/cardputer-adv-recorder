@@ -30,8 +30,9 @@ bool RecorderApp::startRecording()
         setError("E4: WAV file failed.");
         return false;
     }
+    currentIdentity_ = makeRecordingIdentity();
     if (!writer_.beginStreaming(
-            recordingDescriptor, kRecordingSpec)) {
+            recordingDescriptor, kRecordingSpec, currentIdentity_)) {
         storage_.remove(currentPath_.c_str());
         currentPath_ = "";
         setError("E4: WAV file failed.");
@@ -241,7 +242,7 @@ void RecorderApp::finishSaving(bool success, const String& detail)
     String failureDetail = detail;
     if (success) {
         const std::uint32_t expectedSize =
-            static_cast<std::uint32_t>(kPcmWavHeaderSize) +
+            static_cast<std::uint32_t>(writer_.headerSize()) +
             saveTotalBytes_;
         const std::uint32_t actualSize =
             storage_.fileSize(currentPath_.c_str());
@@ -258,6 +259,9 @@ void RecorderApp::finishSaving(bool success, const String& detail)
                 String(static_cast<unsigned long>(actualSize)) +
                 "/" +
                 String(static_cast<unsigned long>(expectedSize));
+        } else {
+            syncNoteSaved(currentPath_, currentIdentity_, actualSize,
+                          saveTotalBytes_);
         }
     }
 

@@ -14,7 +14,8 @@ bool RecorderApp::anyInput(const InputEvent& event) const
     return event.g0 || event.left || event.right || event.up ||
            event.down || event.speedDown || event.speedUp ||
            event.confirm || event.back || event.fail || event.record ||
-           event.deletePressed || event.settings || event.help;
+           event.deletePressed || event.settings || event.help ||
+           event.sync;
 }
 bool RecorderApp::screenSaverAllowed() const
 {

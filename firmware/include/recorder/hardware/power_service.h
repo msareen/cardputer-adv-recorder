@@ -17,6 +17,11 @@ public:
     void end();
 
     BatteryReading readBattery();
+    // The Cardputer ADV has no charge-status signal, so "on external power"
+    // is a heuristic: a USB host is sending frames to the USB serial port,
+    // or the battery sits at charging voltage (wall chargers send no
+    // frames).
+    bool externalPowerLikely(const BatteryReading& battery) const;
     ServiceState state() const;
     ErrorCode lastError() const;
 
