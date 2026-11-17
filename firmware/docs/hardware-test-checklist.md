@@ -95,8 +95,11 @@ Keep the serial monitor open: `[PAIR]` and `[SYNC]` lines log free heap.
 - Sync a 10-minute recording; compare the library file's SHA-256 with the
   file copied off the card.
 - Pull the network mid-download, then sync again: the partial file resumes.
-- Record the serial `free heap`, `min heap` and `KB/s` lines (WiFi + TLS
-  with the Bluetooth controller memory reserved).
+- Record the serial `free heap`, `min heap` and `KB/s` lines. Reference
+  from the first run: 163 KB free at sync start, 138 KB serving, 70 KB at
+  the lowest during downloads, 254-291 KB/s.
+- Record and play a clip after a sync (audio buffers are allocated again);
+  then start pairing after a WiFi sync without rebooting (modem sleep).
 - Sync from the desktop app; confirm `Unsynced` drops to 0 and the device
   returns to the library after the desktop calls `/v1/done`.
 - With `Delete After Sync` on, confirm acked files are deleted and locked

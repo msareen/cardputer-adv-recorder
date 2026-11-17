@@ -52,16 +52,19 @@ Milestones from the [architecture doc](docs/architecture/Cardputer-ADV-Recorder-
 
 | # | Milestone | State |
 | --- | --- | --- |
-| 1 | Recording identity (`cprc` chunk, sync index) | Implemented, host-tested |
-| 2 | WiFi data path | Implemented (now HTTPS, see 4) |
-| 3 | Desktop shell: accounts, library, sync | Implemented, tested end to end against the mock |
-| 4 | Bluetooth pairing, mutual TLS, WiFi provisioning | Implemented, host-tested on both sides |
-| 5 | Hands-free sync: mDNS discovery, tray worker, auto-sync when charging | Implemented, desktop side tested end to end against the mock |
-| 6 | BLE fallback transfer, installers, release image | Implemented: BLE fallback host-tested on the desktop side; installer CI not run yet |
+| 1 | Recording identity (`cprc` chunk, sync index) | Done, verified on a device |
+| 2 | WiFi data path | Done (HTTPS), about 270 KB/s on a device |
+| 3 | Desktop shell: accounts, library, sync | Done, tested against the mock and a device |
+| 4 | Bluetooth pairing, mutual TLS, WiFi provisioning | Done, verified on a device |
+| 5 | Hands-free sync: mDNS discovery, tray worker, auto-sync when charging | Done; auto-sync on USB power seen on a device |
+| 6 | BLE fallback transfer, installers, release image | Implemented; BLE sync not yet run on a device, installer CI not yet run |
 
-Milestones 1, 2, 4, 5 and 6 have not been verified on a Cardputer yet; the
+The first device run (Cardputer ADV, Windows desktop) found and fixed six
+problems that host tests could not show: memory, radio coexistence, a
+certificate that changed on every start, and Windows Bluetooth scanning.
+They are written up in [hardware findings](docs/hardware-findings.md). The
 [hardware checklist](firmware/docs/hardware-test-checklist.md) covers what
-to try. Deviations from the architecture doc are listed in
+is left to try. Deviations from the architecture doc are listed in
 [`docs/ble-protocol.md`](docs/ble-protocol.md).
 
 ## Docs
@@ -69,7 +72,8 @@ to try. Deviations from the architecture doc are listed in
 - [How it is built and how it works](docs/architecture/overview.html) (detailed, with diagrams; open in a browser)
 - [Architecture and `/v1` protocol](docs/architecture/Cardputer-ADV-Recorder-Sync-Architecture.pdf) (original design)
 - [BLE pairing protocol and sync fallback](docs/ble-protocol.md)
-- [Testing without flashing the device](docs/dev-workflow.md)
+- [Testing without flashing the device](docs/dev-workflow.md), and
+  [what the first device runs taught us](docs/hardware-findings.md)
 - [Firmware](firmware/README.md), [desktop app](desktop/README.md), [mock device](tools/mock-device/README.md)
 
 ## License

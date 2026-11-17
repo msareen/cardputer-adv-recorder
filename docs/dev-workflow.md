@@ -32,9 +32,26 @@ syncs against it by IP address (milestone 3), so no hardware is needed.
 ## 3. Real device (firmware)
 
 Only for what the PC cannot show: heap, SD speed, radio coexistence, battery,
-and the real Bluetooth and TLS stacks. Build and flash with
-`platformio run --target upload`, then walk through
-`firmware/docs/hardware-test-checklist.md`.
+and the real Bluetooth and TLS stacks. Every bug found on the first device
+run was of this kind (see [hardware findings](hardware-findings.md)), so any
+change to radios, TLS or buffers needs one.
+
+Flash the debug build, which sends `Serial` to USB (the release build sends
+it to the UART pins):
+
+```sh
+cd firmware
+platformio run -e cardputer-adv-recorder-debug --target upload
+platformio device monitor            # 115200; quiet until pairing or sync
+```
+
+Read the `free heap`, `min heap` and `KB/s` lines. To decode a crash, pass
+the `Backtrace:` addresses to `xtensa-esp32s3-elf-addr2line -pfiaC -e
+.pio/build/cardputer-adv-recorder-debug/firmware.elf`. If the desktop cannot
+find the device, `cargo run --example ble_scan_cli -- 8` (in
+`desktop/src-tauri`) shows what the PC receives over Bluetooth. Then walk
+through `firmware/docs/hardware-test-checklist.md`, and flash the release
+build again for normal use.
 
 The pairing protocol is checked on the PC from both ends: the desktop runs it
 against a reference device written in Rust (`pairing.rs`), and the firmware's

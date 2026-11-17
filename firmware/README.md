@@ -47,6 +47,13 @@ is not limited by available RAM.
 ```sh
 platformio run
 platformio run --target upload
+```
+
+For serial logs over USB, flash the debug build instead (the release build
+sends `Serial` to the UART pins):
+
+```sh
+platformio run -e cardputer-adv-recorder-debug --target upload
 platformio device monitor
 ```
 
@@ -99,7 +106,9 @@ minutes before trying again; `Esc` stops it until the device is unplugged.
 The library header shows `USB` on external power and how many recordings are
 new (or `synced`).
 
-`Sync` settings: Pair with Desktop, Paired With, WiFi (set from the desktop:
+`Sync` settings: Pair with Desktop, Sync over Bluetooth (for when the
+device cannot reach WiFi; also offered on the sync screen when joining
+fails), Paired With, WiFi (set from the desktop:
 Devices > Change WiFi, with the device in pairing mode), Delete After Sync,
 Auto-Sync Charging, and Forget Pairing (press `Enter` twice; wipes the peer, WiFi credentials and
 sync acks). Protocol details: [`../docs/ble-protocol.md`](../docs/ble-protocol.md).
@@ -111,17 +120,26 @@ are kept in `RECORDER.SYN` on the card. The device id comes from a P-256 key
 pair generated on first boot and stored in NVS. Serial output logs free heap
 and per-file transfer speed during sync.
 
+Memory: the StampS3 has no PSRAM. The 80 KB of audio buffers are allocated
+only while recording or playing and released when sync or pairing starts,
+so WiFi and one TLS session fit (measured: about 270 KB/s, 70 KB of heap to
+spare). What the first device runs taught us is in
+[`../docs/hardware-findings.md`](../docs/hardware-findings.md).
+
 ## Project layout
 
 - `src/app`: recorder state flow, UI, settings, screen saver, file browser,
-  and the sync and pairing screens (`sync_flow.cpp`, `pairing_flow.cpp`).
+  the sync and pairing screens (`sync_flow.cpp`, `pairing_flow.cpp`), the
+  Bluetooth sync fallback (`ble_sync_flow.cpp`), and the audio/radio memory
+  handover (`memory.cpp`).
 - `src/hardware`: Cardputer ADV board, audio, power, microSD, WiFi and BLE
   (NimBLE) services.
 - `src/media`: WAV parsing, writing, the `cprc` chunk, and recording filename
   helpers.
 - `src/sync`: sync index, `/v1` encoding, SHA-256, CBOR, pairing math, device
-  identity (P-256 key, TLS certificate), peer store, AES-GCM channel, and the
-  HTTPS server. The pure parts are host-tested (`test_sync`,
+  identity (P-256 key, TLS certificate), peer store, AES-GCM channel, the
+  transport-independent `/v1` handler (`sync_handler.cpp`) and the HTTPS
+  server. The pure parts are host-tested (`test_sync`,
   `test_pairing`).
 
 ## Controls

@@ -228,7 +228,7 @@ connections (no firewall prompt).</p>
   <text x="45" y="114" font-size="11.5" class="muted">record · play · library · settings · pair · sync</text>
   <rect x="30" y="140" width="145" height="52" rx="8" class="box"/>
   <text x="42" y="162" font-size="12.5" font-weight="600">Audio pipeline</text>
-  <text x="42" y="180" font-size="11" class="muted">80 KB buffers, writer task</text>
+  <text x="42" y="180" font-size="11" class="muted">80 KB heap buffers, writer task</text>
   <rect x="185" y="140" width="145" height="52" rx="8" class="box"/>
   <text x="197" y="162" font-size="12.5" font-weight="600">microSD</text>
   <text x="197" y="180" font-size="11" class="muted">WAV · RECORDER.SYN</text>
@@ -338,11 +338,16 @@ rebase on upstream.</p>
 </div>
 
 <h3>Recording pipeline</h3>
-<p>Recording streams through ten static 4096-sample buffers (80 KB) and a dedicated FreeRTOS writer task
+<p>Recording streams through ten 4096-sample buffers (80 KB) and a dedicated FreeRTOS writer task
 with free/ready queues, so length is limited by SD space, not RAM. The WAV header is written up front
 with placeholder sizes and rewritten on save. The save step checks that the file on disk is exactly
-<code>header + audio</code> bytes (92 + data for new files, 44 + data for old ones). In sync mode,
-audio is idle, so the HTTPS server reuses the same 80 KB as its SD read buffer instead of allocating.</p>
+<code>header + audio</code> bytes (92 + data for new files, 44 + data for old ones).</p>
+<p><b>Memory takes turns.</b> The chip has no PSRAM, and audio buffers, WiFi and a TLS session do not
+fit at the same time. The audio buffers are allocated from the heap when recording or playback starts
+and released when sync or pairing starts (<code>app/memory.cpp</code>); sync reads the card through its
+own 16 KB buffer, and the HTTPS server keeps a single TLS session. Measured on a device: 163 KB free at
+sync start, 70 KB at the lowest point of a download, about 270 KB/s. Before this change the buffers were
+static and downloads ran out of heap. See <a href="../hardware-findings.md">hardware findings</a>.</p>
 
 <h3>Settings</h3>
 <table>
@@ -468,7 +473,7 @@ resumes partial files with <code>Range</code>.</p>
   <tr><td><code>GET /v1/info</code></td><td>device_id, firmware, battery_pct, free_bytes, unsynced, clock_set</td><td>First call; proves the pinned identity</td></tr>
   <tr><td><code>POST /v1/time</code></td><td><code>{}</code></td><td>Body <code>{unix_ms, tz_offset_min}</code>; sets the device clock (SNTP is the fallback)</td></tr>
   <tr><td><code>GET /v1/manifest?since=N</code></td><td><code>{cursor, recordings:[{id, name, size, created_ms, duration_ms, locked, acked}]}</code></td><td>Only entries changed after N; streamed entry by entry</td></tr>
-  <tr><td><code>GET /v1/recordings/{id}</code></td><td>WAV bytes, 200 or 206</td><td>Range supported; 32 KB SD reads; hashed while streaming a whole file</td></tr>
+  <tr><td><code>GET /v1/recordings/{id}</code></td><td>WAV bytes, 200 or 206</td><td>Range supported; 16 KB SD reads; hashed while streaming a whole file</td></tr>
   <tr><td><code>GET /v1/recordings/{id}/sha256</code></td><td><code>{sha256}</code></td><td>Cached, or computed (about 20 s for 19 MB)</td></tr>
   <tr><td><code>POST /v1/recordings/{id}/ack</code></td><td><code>{acked, deleted}</code></td><td>Body <code>{sha256}</code>; must match. Deletes only if Delete After Sync is on and the file is not locked</td></tr>
   <tr><td><code>DELETE /v1/recordings/{id}</code></td><td><code>{deleted}</code></td><td>Only on explicit request from the app; refuses locked files</td></tr>
@@ -594,29 +599,40 @@ mDNS, corrected its address and synced both recordings within 5 seconds.</p>
 <h2 id="status">13. Status and limits</h2>
 <table>
   <tr><th>#</th><th>Milestone</th><th>State</th></tr>
-  <tr><td>1</td><td>Recording identity</td><td><span class="pill ok">implemented</span><span class="pill warn">needs device run</span></td></tr>
-  <tr><td>2</td><td>WiFi data path</td><td><span class="pill ok">implemented</span> now served over HTTPS (4)</td></tr>
-  <tr><td>3</td><td>Desktop shell</td><td><span class="pill ok">done</span> tested end to end against the mock</td></tr>
-  <tr><td>4</td><td>Pairing and mutual TLS</td><td><span class="pill ok">implemented</span><span class="pill warn">needs device run</span></td></tr>
-  <tr><td>5</td><td>Hands-free sync</td><td><span class="pill ok">implemented</span> desktop side tested end to end; <span class="pill warn">device side needs a run</span></td></tr>
-  <tr><td>6</td><td>BLE fallback transfer, installers, release image</td><td><span class="pill todo">not started</span></td></tr>
+  <tr><td>1</td><td>Recording identity</td><td><span class="pill ok">done</span> stable ids seen on a device</td></tr>
+  <tr><td>2</td><td>WiFi data path</td><td><span class="pill ok">done</span> about 270 KB/s over HTTPS on a device</td></tr>
+  <tr><td>3</td><td>Desktop shell</td><td><span class="pill ok">done</span> tested end to end against the mock and a device</td></tr>
+  <tr><td>4</td><td>Pairing and mutual TLS</td><td><span class="pill ok">done</span> paired and synced on a device</td></tr>
+  <tr><td>5</td><td>Hands-free sync</td><td><span class="pill ok">done</span> device starts auto-sync on USB power</td></tr>
+  <tr><td>6</td><td>BLE fallback transfer, installers, release image</td><td><span class="pill ok">implemented</span><span class="pill warn">BLE sync and installer CI need a run</span></td></tr>
 </table>
 <h3>Deviations from the architecture PDF</h3>
 <ul class="tight">
   <li>Pairing adds a nonce commitment (hello / hello / reveal), against code grinding.</li>
-  <li>Bluetooth stays off during sync (no Status characteristic, no BLE discovery), to leave heap for
+  <li>Bluetooth stays off during WiFi sync (no Status characteristic, no BLE discovery), to leave heap for
     WiFi and TLS; discovery is mDNS only.</li>
+  <li>The BLE fallback carries <code>/v1</code> requests and file bytes as encrypted Control messages; there
+    is no separate Data characteristic. It is started by hand on both sides.</li>
   <li>Unpaired dev devices are supported over plain HTTP for the mock.</li>
   <li>M5GFX is pinned to 0.2.27 because upstream's 0.2.22 is no longer in the PlatformIO registry.</li>
 </ul>
-<h3>Risks to check on hardware</h3>
+<h3>What the first device runs showed</h3>
+<p>Six problems only hardware could show, all fixed; details in
+<a href="../hardware-findings.md">hardware findings</a>:</p>
 <ul class="tight">
-  <li><b>Heap</b> on a chip without PSRAM: 80 KB audio buffers plus WiFi and a TLS session, with the
-    Bluetooth controller memory reserved (the Arduino core would otherwise free it at boot). Static RAM
-    is 43% of 320 KB; serial logs print free and minimum heap during pairing and sync.</li>
-  <li><b>Throughput</b> over TLS from the 10 MHz SD bus (logged as KB/s per file).</li>
+  <li><b>Heap</b>: static audio buffers plus a TLS session left 5.7 KB free; downloads crawled and aborted.
+    Audio buffers now live on the heap only while recording or playing; static RAM 141 KB &rarr; 59 KB.</li>
+  <li><b>Coexistence</b>: WiFi without modem sleep while Bluetooth runs aborts in <code>coex_core_enable</code>;
+    the Arduino core keeps that setting across WiFi restarts.</li>
+  <li><b>Pinned certificate</b>: the desktop rebuilt its client certificate on every start and the device
+    rejected it (<code>-0x2700</code>); it is now deterministic.</li>
+  <li><b>Windows BLE scan</b>: a service filter drops the scan response holding the device id.</li>
+</ul>
+<h3>Still to check on hardware</h3>
+<ul class="tight">
+  <li>BLE fallback throughput (expected 30-80 KB/s).</li>
   <li><b>Charging detection</b> with wall chargers (voltage heuristic).</li>
-  <li><b>Coexistence</b> of WiFi and BLE while pairing tests the network.</li>
+  <li>Recording and playback after a sync (audio buffers allocated again).</li>
 </ul>
 
 <!-- ============================================================ -->
@@ -624,7 +640,8 @@ mDNS, corrected its address and synced both recordings within 5 seconds.</p>
 <pre># firmware (from firmware/)
 platformio run -e cardputer-adv-recorder                  # build
 platformio run -e cardputer-adv-recorder --target upload  # flash
-platformio device monitor                                 # serial log, 115200
+platformio run -e cardputer-adv-recorder-debug --target upload   # same, Serial on USB
+platformio device monitor                                 # serial log, 115200 (debug build)
 platformio test -e native-tests                           # host tests
 
 # desktop (from desktop/)
@@ -633,11 +650,13 @@ npm run tauri dev                                         # app with hot reload
 cd src-tauri && cargo test                                # Rust tests
 cargo run --example sync_cli -- 127.0.0.1:8080 ./lib      # one headless sync
 cargo run --example discover_cli -- 10                    # list announcing devices
+cargo run --example ble_scan_cli -- 8 [--all]             # what Bluetooth sees
 
 # mock device (from tools/mock-device/)
 cargo run -- --dir ./sdcard --port 8080 --mdns [--fault drop-mid|hash-mismatch|busy|low-battery] [--delete-after-sync]</pre>
 <p>More: <code>README.md</code> (repo), <code>docs/ble-protocol.md</code> (wire format),
-<code>docs/dev-workflow.md</code>, <code>firmware/docs/hardware-test-checklist.md</code>, and the
+<code>docs/dev-workflow.md</code>, <code>docs/hardware-findings.md</code>,
+<code>firmware/docs/hardware-test-checklist.md</code>, and the
 architecture PDF next to this file.</p>
 </main>
 </div>
