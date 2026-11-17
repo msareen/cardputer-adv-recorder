@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, errorText, type Device, type SyncEvent, type SyncReport } from "./api";
+import { api, errorText, type BleEstimate, type Device, type SyncEvent, type SyncReport } from "./api";
 import { formatAgo, formatBytes } from "./format";
 import { PairWizard, type PairMode } from "./PairWizard";
 
@@ -9,7 +9,8 @@ interface Props {
   syncing: Set<string>;
   present: Set<string>;
   results: Record<string, { report?: SyncReport; error?: string; automatic?: boolean } | undefined>;
-  onSync: (deviceId: string) => void;
+  estimates: Record<string, BleEstimate | undefined>;
+  onSync: (deviceId: string, bluetooth?: boolean) => void;
   onChanged: () => void;
 }
 
@@ -39,7 +40,13 @@ function resultText(report: SyncReport): string {
   return parts.join(" · ");
 }
 
-export function Devices({ devices, progress, syncing, present, results, onSync, onChanged }: Props) {
+function estimateText(e: BleEstimate): string {
+  if (e.bytes === 0) return "Over Bluetooth: nothing new to transfer";
+  const minutes = Math.max(1, Math.round(e.secs / 60));
+  return `Over Bluetooth: ${formatBytes(e.bytes)}, about ${minutes} min`;
+}
+
+export function Devices({ devices, progress, syncing, present, results, estimates, onSync, onChanged }: Props) {
   const [address, setAddress] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
@@ -191,6 +198,7 @@ export function Devices({ devices, progress, syncing, present, results, onSync, 
                       {d.firmware ?? "—"}
                     </div>
                   </div>
+                  {isSyncing && estimates[d.id] && <div className="sync-line">{estimateText(estimates[d.id]!)}</div>}
                   {isSyncing && <div className="sync-line">{progressText(progress[d.id])}</div>}
                   {isSyncing && progress[d.id]?.phase === "downloading" && (
                     <div className="bar">
@@ -229,6 +237,15 @@ export function Devices({ devices, progress, syncing, present, results, onSync, 
                     {d.paired && (
                       <button onClick={() => setWizard({ kind: "wifi", deviceId: d.id, name: d.name })}>
                         Change WiFi
+                      </button>
+                    )}
+                    {d.paired && (
+                      <button
+                        disabled={isSyncing}
+                        title="When the Cardputer cannot reach WiFi: choose Sync over Bluetooth on it first. Slower (about 30 KB/s)."
+                        onClick={() => onSync(d.id, true)}
+                      >
+                        Sync over Bluetooth
                       </button>
                     )}
                     <button className="danger" onClick={() => remove(d)}>

@@ -1,4 +1,4 @@
-# BLE pairing protocol (milestone 4)
+# BLE pairing protocol (milestone 4) and sync fallback (milestone 6)
 
 Detailed wire format for the Bluetooth part of the
 [architecture doc](architecture/Cardputer-ADV-Recorder-Sync-Architecture.pdf).
@@ -14,15 +14,19 @@ vectors (`test_pairing` and `shared_vectors_with_firmware`).
 | Info | `6f1c0002-…` | read, plain CBOR `{v, id, fw, paired}` |
 | Control | `6f1c0003-…` | write (with response) + notify |
 
-The device advertises only in pairing mode (Settings > Sync > Pair with
-Desktop), for at most two minutes. The scan response carries manufacturer
-data for company `0xFFFF`: `"CP"`, a flags byte (bit 0 pairing mode, bit 1
-already paired), and the 8-byte device id.
+The device advertises in pairing mode (Settings > Sync > Pair with
+Desktop, for at most two minutes) and in the sync fallback (below). The
+scan response carries manufacturer data for company `0xFFFF`: `"CP"`, a
+flags byte (bit 0 pairing mode, bit 1 already paired, bit 2 sync fallback),
+and the 8-byte device id. The main advertisement holds only the service
+UUID, so a desktop must scan without a service filter: Windows applies the
+filter to each packet and would drop the scan response.
 
-Not implemented: the Status characteristic, and advertising during sync.
-The device turns Bluetooth off in sync mode to leave heap for WiFi and TLS,
-and desktops find it by mDNS (`_cprec._tcp.local`, TXT `id`) instead. The
-Data characteristic arrives with the BLE fallback transfer (milestone 6).
+Not implemented: the Status characteristic, and advertising during WiFi
+sync. The device turns Bluetooth off in WiFi sync mode to leave heap for
+WiFi and TLS, and desktops find it by mDNS (`_cprec._tcp.local`, TXT `id`)
+instead. There is no separate Data characteristic either: the sync fallback
+carries file bytes in encrypted Control messages (below).
 
 ## Framing
 
@@ -97,3 +101,41 @@ with. Neither side checks certificate dates (the device clock may be unset).
 
 Forget Pairing on the device wipes the peer, the WiFi credentials and the
 acks. Removing a device in the desktop app forgets it on the desktop only.
+
+## Sync fallback (milestone 6)
+
+For when the device cannot reach WiFi. The device offers it when joining
+WiFi fails or no network is set (Enter on the sync screen), and from
+Settings > Sync > Sync over Bluetooth. It advertises with flags bit 2 and
+accepts only its paired desktop; WiFi stays off. On the desktop: Devices >
+Sync over Bluetooth.
+
+The desktop opens the known-host session exactly as for changing WiFi
+(hello / hello / reveal, then `{t:"session"}`; the device sends no
+`networks`). A desktop that is not the peer gets a plain
+`{t:"error", e:"not_paired"}` in place of the device's hello.
+
+It then sends the `/v1` requests it would send over HTTPS, one at a time,
+as encrypted Control messages:
+
+```
+host    {t:"req", m, p, since?, range?, body?}
+device  {t:"res", s, ct, cr}           status, content type, Content-Range
+device  {t:"body", d} ...              up to 1536 bytes each
+device  {t:"end"}
+```
+
+`m` is the method, `p` the path (`/v1/manifest`), and `since`, `range` and
+`body` carry the query value, the Range header and the JSON body as text.
+Every response, errors included, ends with `end`; an error's `{code,
+message}` JSON arrives in `body` messages. Bodies are batched to 1536 bytes,
+so each message stays under the 2048-byte limit after CBOR and AES-GCM.
+
+There is no app-level flow control: the device waits for free notification
+buffers before each fragment (BLE delivers notifications in order), and the
+desktop handles one request at a time. A broken link ends the sync; a
+partial download resumes from its length (`range`) on the next attempt,
+like over WiFi. Both ends share the request handling with the HTTPS server
+(`SyncHandler` on the device, the `Device` trait on the desktop), so the
+endpoints behave the same over both transports. Expect roughly 30 KB/s; the
+desktop shows an estimate from the manifest before transferring.

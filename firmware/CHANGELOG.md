@@ -2,6 +2,26 @@
 
 ## Unreleased (1.5.0-dev) - Sync
 
+### Milestone 6: Bluetooth sync fallback and release
+
+- Sync over Bluetooth when WiFi is unavailable: offered on the sync screen
+  when joining fails or no network is set (`Enter`), and from Settings >
+  Sync > Sync over Bluetooth. Only the paired desktop can connect; the
+  `/v1` requests travel in the encrypted pairing channel.
+- `/v1` request handling moved into `SyncHandler`, shared by the HTTPS
+  server and the Bluetooth fallback.
+- BLE notifications wait for free buffers instead of being dropped.
+- Fix: the device rebooted while testing WiFi during pairing, or when
+  pairing after a WiFi sync (WiFi modem sleep was off with Bluetooth on;
+  the WiFi radio now also stays up for the whole of pairing).
+- Fix: WiFi downloads ran out of heap (10 KB/s, then aborted). The 80 KB of
+  audio buffers are now allocated only while recording or playing, sync
+  reads through its own 16 KB buffer, and the HTTPS server keeps one TLS
+  session. Measured: about 270 KB/s with 70 KB of heap to spare.
+- `cardputer-adv-recorder-debug` build environment with serial logs on USB.
+- Publish an app-only `-m5launcher.bin` next to the full image, for installing
+  from M5Launcher.
+
 ### Milestone 5: hands-free sync
 
 - Announce `_cprec._tcp.local` (TXT `id`) over mDNS while in sync mode.

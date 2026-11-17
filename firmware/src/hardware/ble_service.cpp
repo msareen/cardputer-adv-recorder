@@ -21,6 +21,7 @@ constexpr const char* kControlUuid = "6f1c0003-5b2e-4c8f-9a4d-3e7b1f2a9c00";
 constexpr std::uint16_t kCompanyId = 0xFFFF;  // "no company", for testing
 constexpr std::uint8_t kFlagPairing = 0x01;
 constexpr std::uint8_t kFlagPaired = 0x02;
+constexpr std::uint8_t kFlagSync = 0x04;
 constexpr std::size_t kMaxInbox = 8;
 
 // One BLE service exists at a time; static callbacks avoid allocating new
@@ -40,7 +41,7 @@ public:
         if (gOwner != nullptr) {
             gOwner->onDisconnect();
         }
-        // Stay discoverable for the rest of pairing mode.
+        // Stay discoverable for the rest of pairing or sync mode.
         NimBLEDevice::startAdvertising();
     }
     void onMTUChange(std::uint16_t mtu, ble_gap_conn_desc*) override
@@ -68,7 +69,7 @@ ControlCallbacks gControlCallbacks;
 }  // namespace
 
 bool BleService::begin(const std::uint8_t deviceId[8], bool hasPeer,
-                       const std::string& info)
+                       const std::string& info, bool syncMode)
 {
     if (active_) {
         return true;
@@ -101,7 +102,7 @@ bool BleService::begin(const std::uint8_t deviceId[8], bool hasPeer,
     manufacturer += static_cast<char>(kCompanyId & 0xFF);
     manufacturer += static_cast<char>(kCompanyId >> 8);
     manufacturer += "CP";
-    manufacturer += static_cast<char>(kFlagPairing |
+    manufacturer += static_cast<char>((syncMode ? kFlagSync : kFlagPairing) |
                                       (hasPeer ? kFlagPaired : 0));
     manufacturer.append(reinterpret_cast<const char*>(deviceId), 8);
 
@@ -175,20 +176,43 @@ bool BleService::send(const std::string& frame)
     }
     // ATT notifications carry MTU - 3 bytes.
     const std::size_t maxFragment = mtu > 23 ? mtu - 3 : 20;
+    const std::uint16_t attribute = control_->getHandle();
     for (const std::string& fragment : fragmentMessage(frame, maxFragment)) {
-        control_->setValue(
-            reinterpret_cast<const std::uint8_t*>(fragment.data()),
-            fragment.size());
-        control_->notify();
-        delay(5);  // let the controller drain its notification buffers
+        // NimBLECharacteristic::notify() drops a fragment silently when the
+        // host is out of buffers, which would corrupt a file transfer. Send
+        // directly and retry until buffers free up (the stack consumes the
+        // mbuf whether or not the call succeeds).
+        bool sent = false;
+        for (int attempt = 0; attempt < 500 && !sent; ++attempt) {
+            std::uint16_t handle;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (!connected_) {
+                    return false;
+                }
+                handle = connHandle_;
+            }
+            os_mbuf* om = ble_hs_mbuf_from_flat(fragment.data(),
+                                                fragment.size());
+            if (om != nullptr &&
+                ble_gattc_notify_custom(handle, attribute, om) == 0) {
+                sent = true;
+            } else {
+                delay(2);
+            }
+        }
+        if (!sent) {
+            return false;
+        }
     }
     return true;
 }
 
-void BleService::onConnect(std::uint16_t)
+void BleService::onConnect(std::uint16_t handle)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     connected_ = true;
+    connHandle_ = handle;
     reassembler_.reset();
     inbox_.clear();
 }

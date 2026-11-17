@@ -81,6 +81,12 @@ void RecorderApp::handleSettingsInput(const InputEvent& event)
             openPairing();
             return;
         }
+        if (settingsPage_ == SettingsPage::kSync &&
+            selectedSetting_ == kSyncSettingBluetooth) {
+            saveSettings();
+            startBleSync();
+            return;
+        }
         cycleSelectedSetting(1);
     } else if (event.left) {
         if (resetSettingsConfirm_) {
@@ -287,6 +293,7 @@ String RecorderApp::settingValueText(std::uint8_t index) const
     if (settingsPage_ == SettingsPage::kSync) {
         switch (index) {
             case kSyncSettingPair:
+            case kSyncSettingBluetooth:
                 return ">";
             case kSyncSettingPeer:
                 return peer_.paired ? (peer_.hostName.empty()

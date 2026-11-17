@@ -28,10 +28,13 @@ pub const SERVICE_UUID: &str = "6f1c0001-5b2e-4c8f-9a4d-3e7b1f2a9c00";
 pub const INFO_UUID: &str = "6f1c0002-5b2e-4c8f-9a4d-3e7b1f2a9c00";
 pub const CONTROL_UUID: &str = "6f1c0003-5b2e-4c8f-9a4d-3e7b1f2a9c00";
 /// Manufacturer data in the scan response: company 0xFFFF, "CP", flags,
-/// 8-byte device id. Flags bit 0: pairing mode; bit 1: has a peer.
+/// 8-byte device id. Flags bit 0: pairing mode; bit 1: has a peer; bit 2:
+/// BLE sync fallback.
 pub const MFG_COMPANY: u16 = 0xFFFF;
 pub const MFG_FLAG_PAIRING: u8 = 0x01;
 pub const MFG_FLAG_PAIRED: u8 = 0x02;
+/// Bit 2: the device is in the BLE sync fallback (not pairing mode).
+pub const MFG_FLAG_SYNC: u8 = 0x04;
 
 const FRAME_PLAIN: u8 = 0x00;
 const FRAME_SECURE: u8 = 0x01;
@@ -213,6 +216,9 @@ impl Message {
         self.bytes(key)
             .and_then(|b| b.try_into().ok())
             .ok_or_else(|| PairError::Protocol(format!("missing or bad '{key}'")))
+    }
+    pub fn uint(&self, key: &str) -> Option<u64> {
+        self.get(key)?.as_integer().and_then(|i| u64::try_from(i).ok())
     }
     pub fn flag(&self, key: &str) -> bool {
         self.get(key).and_then(Value::as_bool).unwrap_or(false)
@@ -421,6 +427,29 @@ impl<C: ControlChannel> Session<C> {
     pub async fn wifi_result(&mut self) -> PairResult<WifiResult> {
         let msg = self.expect("wifi", Duration::from_secs(40)).await?;
         Ok(WifiResult { ok: msg.flag("ok"), ip: msg.text("ip").filter(|s| !s.is_empty()) })
+    }
+
+    /// Sends any encrypted message (the BLE sync fallback's requests).
+    pub async fn send_message(&mut self, entries: Vec<(&str, Value)>) -> PairResult<()> {
+        self.send_secure(entries).await
+    }
+
+    /// Next encrypted message of any type. A plain `error` from the device
+    /// becomes [`PairError::Device`].
+    pub async fn next_message(&mut self, timeout: Duration) -> PairResult<Message> {
+        let frame = self.chan.recv(timeout).await?;
+        let msg = match frame.first() {
+            Some(&FRAME_SECURE) => Message::parse(&self.secure.open(&frame)?)?,
+            Some(&FRAME_PLAIN) => parse_plain(&frame)?,
+            _ => return Err(PairError::Protocol("empty frame".into())),
+        };
+        if msg.kind == "error" {
+            return Err(PairError::Device(msg.text("e").unwrap_or_default()));
+        }
+        if frame[0] != FRAME_SECURE {
+            return Err(PairError::Protocol(format!("unencrypted {}", msg.kind)));
+        }
+        Ok(msg)
     }
 
     pub fn into_channel(self) -> C {

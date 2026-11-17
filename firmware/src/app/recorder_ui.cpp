@@ -209,7 +209,7 @@ void RecorderApp::draw()
             "Brightness", "Screen Saver", "Low Battery Save",
             "Seek Step", "Sync", "Reset to Default", "Version"};
         const char* syncLabels[kSyncSettingsCount] = {
-            "Pair with Desktop", "Paired With", "WiFi",
+            "Pair with Desktop", "Sync over Bluetooth", "Paired With", "WiFi",
             "Delete After Sync", "Auto-Sync Charging", "Forget Pairing"};
         const bool syncPage = settingsPage_ == SettingsPage::kSync;
         const char* screenSaverLabels[kScreenSaverSettingsCount] = {

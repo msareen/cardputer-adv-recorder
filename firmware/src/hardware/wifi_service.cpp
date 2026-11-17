@@ -11,17 +11,24 @@ bool WifiService::begin(const char* ssid, const char* password)
         return false;
     }
     WiFi.persistent(false);
+    // Full throughput while transferring, but keep modem sleep while
+    // Bluetooth is up (the WiFi test during pairing): coexistence aborts in
+    // coex_core_enable when either radio starts while WiFi runs without
+    // modem sleep. The core applies this setting when the station starts.
+    WiFi.setSleep(btStarted());
     WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);  // full throughput while transferring
     WiFi.begin(ssid, password);
     active_ = true;
     return true;
 }
 
-std::vector<std::string> WifiService::scan(std::size_t maxNetworks)
+std::vector<std::string> WifiService::scan(std::size_t maxNetworks,
+                                           bool keepRadioOn)
 {
     std::vector<std::string> networks;
     WiFi.persistent(false);
+    // Pairing starts Bluetooth next, with this radio still on.
+    WiFi.setSleep(true);
     WiFi.mode(WIFI_STA);
     const int found = WiFi.scanNetworks();
     // scanNetworks returns results sorted by signal strength.
@@ -39,7 +46,9 @@ std::vector<std::string> WifiService::scan(std::size_t maxNetworks)
         }
     }
     WiFi.scanDelete();
-    if (!active_) {
+    if (keepRadioOn) {
+        radioOn_ = true;
+    } else if (!active_ && !radioOn_) {
         WiFi.mode(WIFI_OFF);
     }
     return networks;
@@ -80,12 +89,16 @@ void WifiService::end()
         MDNS.end();
         mdnsActive_ = false;
     }
-    if (!active_) {
+    if (!active_ && !radioOn_) {
         return;
     }
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
+    // The core remembers the sleep setting across restarts of the radio;
+    // put back the default that is safe with Bluetooth.
+    WiFi.setSleep(true);
     active_ = false;
+    radioOn_ = false;
 }
 
 }  // namespace cardputer_recorder

@@ -286,32 +286,36 @@ void RecorderApp::syncNoteDeleted(const String& name)
     refreshUnsyncedCount();
 }
 
-void RecorderApp::startSync(bool automatic)
+// Checks shared by WiFi sync and the BLE fallback; indexes the card.
+bool RecorderApp::prepareSync()
 {
-    syncAutomatic_ = automatic;
     if (!peer_.paired) {
         message_ = "Pair first: G0 > Sync > Pair.";
         forceRedraw_ = true;
-        return;
-    }
-    if (peer_.wifiSsid.empty()) {
-        message_ = "No WiFi set. Change it from the desktop.";
-        forceRedraw_ = true;
-        return;
+        return false;
     }
     if (!storage_.isMounted()) {
         setError("E1: microSD mount failed.");
-        return;
+        return false;
     }
     if (shouldAutoSaveForLowBattery()) {
         message_ = "Battery low: charge to sync.";
         forceRedraw_ = true;
-        return;
+        return false;
     }
     if (!identity_.ready() && !identity_.begin()) {
         message_ = "Device key unavailable.";
         forceRedraw_ = true;
-        return;
+        return false;
+    }
+
+    // Audio is idle from here until sync ends; give its buffers to the
+    // radios and TLS.
+    releaseAudioBuffers();
+    if (!ensureSyncScratch()) {
+        message_ = "Not enough memory. Restart.";
+        forceRedraw_ = true;
+        return false;
     }
 
     deleteConfirm_ = false;
@@ -322,6 +326,33 @@ void RecorderApp::startSync(bool automatic)
     syncUnsyncedAtStart_ =
         static_cast<std::uint32_t>(syncIndex_.unsyncedCount(peer_.hostId));
     syncUnsyncedShown_ = syncUnsyncedAtStart_;
+    syncDoneRequested_ = false;
+    syncDirty_ = false;
+    syncAddress_ = "";
+    syncFile_.clear();
+    syncDone_ = 0;
+    syncTotal_ = 0;
+    return true;
+}
+
+void RecorderApp::startSync(bool automatic)
+{
+    syncAutomatic_ = automatic;
+    if (automatic && peer_.wifiSsid.empty()) {
+        return;  // the BLE fallback needs someone at the desktop
+    }
+    if (!prepareSync()) {
+        return;
+    }
+    if (peer_.wifiSsid.empty()) {
+        // No network to join: offer the BLE fallback straight away.
+        state_ = State::kSyncing;
+        syncPhase_ = SyncPhase::kWifiFailed;
+        syncPhaseStartedMs_ = millis();
+        message_ = "No WiFi set.";
+        forceRedraw_ = true;
+        return;
+    }
 
     if (!wifi_.begin(peer_.wifiSsid.c_str(), peer_.wifiPassword.c_str())) {
         message_ = "WiFi start failed.";
@@ -331,20 +362,74 @@ void RecorderApp::startSync(bool automatic)
     state_ = State::kSyncing;
     syncPhase_ = SyncPhase::kJoining;
     syncPhaseStartedMs_ = millis();
-    syncDoneRequested_ = false;
-    syncDirty_ = false;
-    syncAddress_ = "";
-    syncFile_.clear();
-    syncDone_ = 0;
-    syncTotal_ = 0;
     message_ = String("Joining ") + peer_.wifiSsid.c_str() + "...";
     Serial.printf("[SYNC] Start. free heap=%u\n",
                   static_cast<unsigned>(ESP.getFreeHeap()));
     forceRedraw_ = true;
 }
 
+SyncCallbacks RecorderApp::makeSyncCallbacks()
+{
+    SyncCallbacks callbacks;
+    callbacks.info = [this]() {
+        protocol::DeviceInfo info;
+        info.deviceId = identity_.deviceIdHex();
+        info.firmware = kAppVersion;
+        info.batteryPct = battery_.valid ? battery_.levelPercent : -1;
+        const std::uint64_t capacity = storage_.capacityBytes();
+        const std::uint64_t used = storage_.usedBytes();
+        info.freeBytes = capacity > used ? capacity - used : 0;
+        std::lock_guard<std::mutex> lock(syncMutex_);
+        info.unsynced = static_cast<std::uint32_t>(
+            syncIndex_.unsyncedCount(peer_.hostId));
+        info.clockSet = clockIsSet();
+        return info;
+    };
+    callbacks.isLocked = [this](const std::string& name) {
+        const String exact = name.c_str();
+        String upper = exact;
+        upper.toUpperCase();
+        return isLocked(exact) || isLocked(upper);
+    };
+    callbacks.deleteAfterSync = [this]() {
+        return settings_.deleteAfterSync;
+    };
+    // The server holds syncMutex_ when it calls this.
+    callbacks.saveIndex = [this]() {
+        const bool saved = saveSyncIndex();
+        syncUnsyncedShown_ = static_cast<std::uint32_t>(
+            syncIndex_.unsyncedCount(peer_.hostId));
+        syncDirty_ = true;
+        return saved;
+    };
+    callbacks.setClock = [](std::int64_t unixMs, std::int32_t) {
+        timeval now{};
+        now.tv_sec = static_cast<time_t>(unixMs / 1000);
+        now.tv_usec = static_cast<suseconds_t>((unixMs % 1000) * 1000);
+        settimeofday(&now, nullptr);
+    };
+    callbacks.progress = [this](const std::string& name,
+                                std::uint32_t done,
+                                std::uint32_t total) {
+        onSyncProgress(name, done, total);
+    };
+    callbacks.done = [this]() { syncDoneRequested_ = true; };
+    callbacks.request = [this]() { syncLastRequestMs_ = millis(); };
+    return callbacks;
+}
+
 void RecorderApp::serviceSync()
 {
+    if (syncPhase_ == SyncPhase::kBluetooth) {
+        serviceBleSync();
+        return;
+    }
+    if (syncPhase_ == SyncPhase::kWifiFailed) {
+        if (millis() - syncPhaseStartedMs_ > kManualSyncIdleMs) {
+            stopSync("Sync stopped.");
+        }
+        return;
+    }
     if (syncPhase_ == SyncPhase::kJoining) {
         if (wifi_.connected()) {
             if (!clockIsSet()) {
@@ -364,59 +449,12 @@ void RecorderApp::serviceSync()
                 return;
             }
 
-            SyncCallbacks callbacks;
-            callbacks.info = [this]() {
-                protocol::DeviceInfo info;
-                info.deviceId = identity_.deviceIdHex();
-                info.firmware = kAppVersion;
-                info.batteryPct = battery_.valid ? battery_.levelPercent : -1;
-                const std::uint64_t capacity = storage_.capacityBytes();
-                const std::uint64_t used = storage_.usedBytes();
-                info.freeBytes = capacity > used ? capacity - used : 0;
-                std::lock_guard<std::mutex> lock(syncMutex_);
-                info.unsynced = static_cast<std::uint32_t>(
-                    syncIndex_.unsyncedCount(peer_.hostId));
-                info.clockSet = clockIsSet();
-                return info;
-            };
-            callbacks.isLocked = [this](const std::string& name) {
-                const String exact = name.c_str();
-                String upper = exact;
-                upper.toUpperCase();
-                return isLocked(exact) || isLocked(upper);
-            };
-            callbacks.deleteAfterSync = [this]() {
-                return settings_.deleteAfterSync;
-            };
-            // The server holds syncMutex_ when it calls this.
-            callbacks.saveIndex = [this]() {
-                const bool saved = saveSyncIndex();
-                syncUnsyncedShown_ = static_cast<std::uint32_t>(
-                    syncIndex_.unsyncedCount(peer_.hostId));
-                syncDirty_ = true;
-                return saved;
-            };
-            callbacks.setClock = [](std::int64_t unixMs, std::int32_t) {
-                timeval now{};
-                now.tv_sec = static_cast<time_t>(unixMs / 1000);
-                now.tv_usec = static_cast<suseconds_t>((unixMs % 1000) * 1000);
-                settimeofday(&now, nullptr);
-            };
-            callbacks.progress = [this](const std::string& name,
-                                        std::uint32_t done,
-                                        std::uint32_t total) {
-                onSyncProgress(name, done, total);
-            };
-            callbacks.done = [this]() { syncDoneRequested_ = true; };
-            callbacks.request = [this]() { syncLastRequestMs_ = millis(); };
+            SyncCallbacks callbacks = makeSyncCallbacks();
 
-            // Audio is idle in sync mode, so the 80 KB audio buffers become
-            // the transfer buffer instead of a new heap allocation.
             if (!syncServer_.begin(
                     kSyncPort, storage_, syncIndex_, syncMutex_,
-                    peer_.hostId,
-                    reinterpret_cast<std::uint8_t*>(audioBuffers_),
-                    sizeof(audioBuffers_), std::move(tls),
+                    peer_.hostId, syncScratch_,
+                    SyncHandler::kMinScratchBytes, std::move(tls),
                     std::move(callbacks))) {
                 stopSync("Secure server failed.");
                 return;
@@ -440,7 +478,16 @@ void RecorderApp::serviceSync()
                 static_cast<unsigned>(ESP.getMinFreeHeap()));
             forceRedraw_ = true;
         } else if (millis() - syncPhaseStartedMs_ > kWifiJoinTimeoutMs) {
-            stopSync("WiFi failed: change it from the desktop.");
+            if (syncAutomatic_) {
+                stopSync("WiFi failed: change it from the desktop.");
+                return;
+            }
+            // Architecture doc: offer the BLE fallback on screen.
+            wifi_.end();
+            syncPhase_ = SyncPhase::kWifiFailed;
+            syncPhaseStartedMs_ = millis();
+            message_ = String("WiFi failed: ") + peer_.wifiSsid.c_str();
+            forceRedraw_ = true;
         }
         return;
     }
@@ -480,6 +527,12 @@ void RecorderApp::stopSync(const String& message)
 {
     syncServer_.end();
     wifi_.end();
+    releaseSyncScratch();
+    if (pairForSync_) {
+        resetPairSession();
+        pairForSync_ = false;
+        ble_.end();
+    }
     Serial.printf("[SYNC] Stop: %s min free heap=%u\n", message.c_str(),
                   static_cast<unsigned>(ESP.getMinFreeHeap()));
     state_ = State::kBrowsing;
@@ -497,6 +550,10 @@ void RecorderApp::stopSync(const String& message)
 
 void RecorderApp::handleSyncInput(const InputEvent& event)
 {
+    if (syncPhase_ == SyncPhase::kWifiFailed && event.confirm) {
+        startBleSync();
+        return;
+    }
     if (event.back) {
         // The user stopped it: no auto-sync until the device is unplugged.
         autoSyncSuppressed_ = true;
@@ -526,8 +583,20 @@ void RecorderApp::drawSyncScreen()
     display.setTextFont(2);
     display.setTextColor(TFT_WHITE, background);
     display.setCursor(8, 30);
-    display.print(syncPhase_ == SyncPhase::kJoining ? "Joining WiFi"
-                                                    : syncAddress_);
+    switch (syncPhase_) {
+        case SyncPhase::kJoining:
+            display.print("Joining WiFi");
+            break;
+        case SyncPhase::kWifiFailed:
+            display.print("Sync over Bluetooth?");
+            break;
+        case SyncPhase::kBluetooth:
+            display.print("Bluetooth sync");
+            break;
+        default:
+            display.print(syncAddress_);
+            break;
+    }
     display.setTextFont(1);
     display.setTextColor(muted, background);
     display.setCursor(8, 50);
@@ -554,10 +623,15 @@ void RecorderApp::drawSyncScreen()
     display.fillRect(0, 111, display.width(), 24, panel);
     display.setTextColor(accent, panel);
     display.setCursor(8, 120);
-    display.print(syncAutomatic_ ? "AUTO SYNC" : "SECURE SYNC");
+    display.print(syncPhase_ == SyncPhase::kBluetooth ? "BLE SYNC"
+                  : syncAutomatic_                  ? "AUTO SYNC"
+                                                    : "SECURE SYNC");
     display.setTextDatum(top_right);
     display.setTextColor(muted, panel);
-    display.drawString("ESC STOP", display.width() - 8, 120);
+    display.drawString(syncPhase_ == SyncPhase::kWifiFailed
+                           ? "ENTER BLE  ESC STOP"
+                           : "ESC STOP",
+                       display.width() - 8, 120);
     display.setTextDatum(top_left);
 }
 

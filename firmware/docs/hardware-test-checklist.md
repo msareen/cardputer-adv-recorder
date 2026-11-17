@@ -106,6 +106,27 @@ Keep the serial monitor open: `[PAIR]` and `[SYNC]` lines log free heap.
 - Confirm `R` does nothing in sync mode and that recording works normally
   after leaving it.
 
+## Bluetooth sync fallback
+
+Use the debug build (`platformio run -e cardputer-adv-recorder-debug
+--target upload`) so serial logs reach USB.
+
+- Pairing: after entering the WiFi password on the desktop, the device
+  shows "Testing WiFi" then the result, and does not reboot (WiFi with
+  Bluetooth on needs modem sleep).
+- Set a wrong WiFi password (Change WiFi), press `S`: after 15 s the device
+  shows "Sync over Bluetooth?". `Enter` starts BLE sync; on the desktop,
+  Devices > Sync over Bluetooth shows an estimate, then syncs.
+- Settings > Sync > Sync over Bluetooth starts it directly.
+- Record the serial `KB/s` for a long recording over BLE (expected
+  30-80 KB/s) and the `min heap`.
+- Walk out of range mid-download: the desktop reports the link lost; Sync
+  over Bluetooth again resumes the partial file.
+- A second desktop (another user or computer) gets "paired with another
+  desktop" and cannot read anything.
+- `Esc` stops BLE sync and returns to the library; auto-sync never starts
+  the BLE fallback by itself.
+
 ## Hands-free sync
 
 - With the desktop app open (auto-sync on), press `S`: the device shows

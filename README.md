@@ -24,6 +24,8 @@ the protocols in [`docs/`](docs/).
    (Auto-Sync Charging). It joins WiFi and announces itself on the network;
    the desktop app finds it and pulls new recordings, even with its window
    closed (it stays in the system tray).
+   No shared network? Choose Sync over Bluetooth on both sides: slower
+   (about 30 KB/s), but it needs no WiFi.
 3. **Safety.** Each file is resumable, checked with SHA-256, saved to the
    library and recorded before the device is told it is safe. The device
    deletes a file only if you turned on Delete After Sync, and never a
@@ -55,9 +57,9 @@ Milestones from the [architecture doc](docs/architecture/Cardputer-ADV-Recorder-
 | 3 | Desktop shell: accounts, library, sync | Implemented, tested end to end against the mock |
 | 4 | Bluetooth pairing, mutual TLS, WiFi provisioning | Implemented, host-tested on both sides |
 | 5 | Hands-free sync: mDNS discovery, tray worker, auto-sync when charging | Implemented, desktop side tested end to end against the mock |
-| 6 | BLE fallback transfer, installers, release image | Not started |
+| 6 | BLE fallback transfer, installers, release image | Implemented: BLE fallback host-tested on the desktop side; installer CI not run yet |
 
-Milestones 1, 2, 4 and 5 have not run on a Cardputer yet; the
+Milestones 1, 2, 4, 5 and 6 have not been verified on a Cardputer yet; the
 [hardware checklist](firmware/docs/hardware-test-checklist.md) covers what
 to try. Deviations from the architecture doc are listed in
 [`docs/ble-protocol.md`](docs/ble-protocol.md).
@@ -66,7 +68,7 @@ to try. Deviations from the architecture doc are listed in
 
 - [How it is built and how it works](docs/architecture/overview.html) (detailed, with diagrams; open in a browser)
 - [Architecture and `/v1` protocol](docs/architecture/Cardputer-ADV-Recorder-Sync-Architecture.pdf) (original design)
-- [BLE pairing protocol](docs/ble-protocol.md)
+- [BLE pairing protocol and sync fallback](docs/ble-protocol.md)
 - [Testing without flashing the device](docs/dev-workflow.md)
 - [Firmware](firmware/README.md), [desktop app](desktop/README.md), [mock device](tools/mock-device/README.md)
 

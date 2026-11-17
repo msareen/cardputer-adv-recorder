@@ -4,8 +4,10 @@ import {
   api,
   errorText,
   onPresenceChanged,
+  onBleEstimate,
   onSyncFinished,
   onSyncProgress,
+  type BleEstimate,
   onSyncStarted,
   type Device,
   type Recording,
@@ -33,6 +35,7 @@ function App() {
     Record<string, { report?: SyncReport; error?: string; automatic?: boolean } | undefined>
   >({});
   const [present, setPresent] = useState<Set<string>>(new Set());
+  const [estimates, setEstimates] = useState<Record<string, BleEstimate | undefined>>({});
 
   useEffect(() => {
     api.session().then(setUser);
@@ -59,7 +62,9 @@ function App() {
         setSyncing((s) => new Set(s).add(e.deviceId));
         setProgress((p) => ({ ...p, [e.deviceId]: undefined }));
         setResults((r) => ({ ...r, [e.deviceId]: undefined }));
+        setEstimates((m) => ({ ...m, [e.deviceId]: undefined }));
       }),
+      onBleEstimate((e) => setEstimates((m) => ({ ...m, [e.deviceId]: e }))),
       onSyncFinished((e) => {
         setSyncing((s) => {
           const next = new Set(s);
@@ -92,9 +97,9 @@ function App() {
     };
   }, [refresh]);
 
-  const sync = useCallback(async (deviceId: string) => {
+  const sync = useCallback(async (deviceId: string, bluetooth = false) => {
     try {
-      await api.syncDevice(deviceId);
+      await (bluetooth ? api.syncDeviceBle(deviceId) : api.syncDevice(deviceId));
     } catch (e) {
       // Errors after the sync started arrive as sync-finished; this covers
       // ones before it (no address, already syncing).
@@ -150,6 +155,7 @@ function App() {
             syncing={syncing}
             present={present}
             results={results}
+            estimates={estimates}
             onSync={sync}
             onChanged={refresh}
           />

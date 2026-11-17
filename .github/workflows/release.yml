@@ -8,13 +8,12 @@ on:
 permissions:
   contents: write
 
-defaults:
-  run:
-    working-directory: firmware
-
 jobs:
-  release:
+  firmware:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -34,4 +33,101 @@ jobs:
           generate_release_notes: true
           files: |
             firmware/dist/cardputer-adv-recorder-${{ github.ref_name }}.bin
+            firmware/dist/cardputer-adv-recorder-${{ github.ref_name }}-m5launcher.bin
             firmware/dist/SHA256SUMS.txt
+
+  # Desktop installers, attached to the release the firmware job created.
+  # Signing is used when its secrets exist; without them the installers are
+  # built unsigned (Windows SmartScreen and macOS Gatekeeper will warn).
+  desktop:
+    needs: firmware
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: ""
+          - os: macos-latest
+            args: "--target universal-apple-darwin"
+          - os: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Linux build dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libdbus-1-dev pkg-config
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Desktop tests
+        working-directory: desktop/src-tauri
+        run: cargo test
+      # Windows Authenticode: WINDOWS_CERTIFICATE is a base64 .pfx.
+      - name: Import Windows signing certificate
+        if: matrix.os == 'windows-latest' && env.HAS_WINDOWS_CERTIFICATE == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfx
+          $config = @{ bundle = @{ windows = @{
+            certificateThumbprint = $cert.Thumbprint
+            digestAlgorithm = "sha256"
+            timestampUrl = "http://timestamp.digicert.com"
+          } } } | ConvertTo-Json -Depth 5 -Compress
+          Set-Content -Path desktop/src-tauri/tauri.signing.json -Value $config
+          "TAURI_SIGNING_ARGS=--config src-tauri/tauri.signing.json" | Out-File -FilePath $env:GITHUB_ENV -Append
+      # macOS Developer ID signing and notarization. Exported only when set:
+      # an empty APPLE_CERTIFICATE would make the bundler fail.
+      - name: macOS signing environment
+        if: matrix.os == 'macos-latest' && env.HAS_APPLE_CERTIFICATE == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+                      APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+              echo "$name=$value" >> "$GITHUB_ENV"
+            fi
+          done
+      - name: Build and upload installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: ${{ github.ref_name }}
+          args: ${{ matrix.args }} ${{ env.TAURI_SIGNING_ARGS }}
+    # Secrets cannot be read in `if`; these flags can. The certificates
+    # themselves reach only the steps that use them.
+    env:
+      HAS_WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
+      HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE != '' }}

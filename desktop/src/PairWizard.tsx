@@ -44,7 +44,8 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
   async function scan() {
     setStep({ name: "scanning" });
     try {
-      let devices = await api.bleScan();
+      // A Cardputer in Bluetooth sync mode only talks to its paired desktop.
+      let devices = (await api.bleScan()).filter((d) => d.pairing);
       if (mode.kind === "wifi") devices = devices.filter((d) => d.deviceId === mode.deviceId);
       setStep({ name: "pick", devices });
     } catch (e) {

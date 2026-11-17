@@ -7,6 +7,8 @@ build_dir=".pio/build/${environment}"
 output_dir="dist"
 image_name="cardputer-adv-recorder-${version}.bin"
 image_path="${output_dir}/${image_name}"
+# App-only image for M5Launcher, which installs it into its own app slot.
+launcher_name="cardputer-adv-recorder-${version}-m5launcher.bin"
 platformio_home="${PLATFORMIO_CORE_DIR:-${HOME}/.platformio}"
 boot_app0="${platformio_home}/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
 esptool="${platformio_home}/packages/tool-esptoolpy/esptool.py"
@@ -35,7 +37,9 @@ mkdir -p "${output_dir}"
   0xe000 "${boot_app0}" \
   0x10000 "${build_dir}/firmware.bin"
 
+cp "${build_dir}/firmware.bin" "${output_dir}/${launcher_name}"
+
 (
   cd "${output_dir}"
-  shasum -a 256 "${image_name}" > SHA256SUMS.txt
+  shasum -a 256 "${image_name}" "${launcher_name}" > SHA256SUMS.txt
 )

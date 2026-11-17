@@ -12,9 +12,12 @@ namespace cardputer_recorder {
 class WifiService {
 public:
     bool begin(const char* ssid, const char* password);
-    // Blocking scan (a few seconds); WiFi is off again afterwards. Unique
-    // SSIDs, strongest first.
-    std::vector<std::string> scan(std::size_t maxNetworks);
+    // Blocking scan (a few seconds). Unique SSIDs, strongest first. WiFi is
+    // off again afterwards unless `keepRadioOn`: pairing keeps the radio up
+    // until end(), because starting WiFi while Bluetooth runs can abort in
+    // the coexistence setup (coex_core_enable).
+    std::vector<std::string> scan(std::size_t maxNetworks,
+                                  bool keepRadioOn = false);
     bool connected() const;
     String ipAddress() const;
     int rssi() const;
@@ -27,6 +30,7 @@ public:
 
 private:
     bool active_ = false;
+    bool radioOn_ = false;  // STA mode without a connection (pairing)
     bool mdnsActive_ = false;
 };
 

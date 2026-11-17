@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod ble;
+pub mod ble_sync;
 pub mod db;
 pub mod device;
 pub mod discovery;
@@ -31,6 +32,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use crate::{
     ble::{BleLink, NearbyDevice},
     db::{Db, DeviceRow, RecordingRow, User},
+    ble_sync::BleDevice,
     device::{Device, HttpDevice, normalize_address, normalize_paired_address},
     discovery::{DiscoveryEvent, Presence},
     identity::HostIdentity,
@@ -444,26 +446,51 @@ async fn sync_device(app: AppHandle, device_id: String) -> CmdResult<SyncReport>
 /// UI shows background syncs too.
 async fn run_sync(app: &AppHandle, device_id: &str, automatic: bool) -> CmdResult<SyncReport> {
     let state = app.state::<AppState>();
-    let device_id = device_id.to_string();
     let user = current_user(&state)?;
     let row = state
         .db
         .lock()
         .unwrap()
-        .get_device(user.id, &device_id)
+        .get_device(user.id, device_id)
         .map_err(err)?
         .ok_or("Unknown device.")?;
     let device = device_client(&state, &user, &row)?;
+    let address = Some(device.base().to_string());
+    let (result, _) = run_sync_with(app, &user, &row, automatic, async { Ok((device, address)) }).await;
+    result
+}
 
+/// Runs one sync over whatever `connect` yields (HTTPS, or the BLE
+/// fallback) and returns the device so the caller can close it.
+async fn run_sync_with<D: Device>(
+    app: &AppHandle,
+    user: &User,
+    row: &DeviceRow,
+    automatic: bool,
+    connect: impl std::future::Future<Output = CmdResult<(D, Option<String>)>>,
+) -> (CmdResult<SyncReport>, Option<D>) {
+    let state = app.state::<AppState>();
+    let device_id = row.id.clone();
     if !state.syncing.lock().unwrap().insert(device_id.clone()) {
-        return Err("This device is already syncing.".into());
+        return (Err("This device is already syncing.".into()), None);
     }
     let _ = app.emit("sync-started", SyncStarted { device_id: device_id.clone(), automatic });
+    let (device, address) = match connect.await {
+        Ok(connected) => connected,
+        Err(e) => {
+            state.syncing.lock().unwrap().remove(&device_id);
+            let _ = app.emit(
+                "sync-finished",
+                SyncFinished { device_id, automatic, report: None, error: Some(e.clone()) },
+            );
+            return (Err(e), None);
+        }
+    };
     let target = SyncTarget {
         db: &state.db,
         user_id: user.id,
         library: PathBuf::from(&user.library_path),
-        address: Some(device.base().to_string()),
+        address,
         expected_device_id: Some(device_id.clone()),
         now_ms: sync::now_ms,
         tz_offset_min: sync::local_tz_offset_min(),
@@ -490,6 +517,76 @@ async fn run_sync(app: &AppHandle, device_id: &str, automatic: bool) -> CmdResul
             error: result.as_ref().err().cloned(),
         },
     );
+    (result, Some(device))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BleEstimate {
+    device_id: String,
+    bytes: u64,
+    secs: u64,
+}
+
+/// BLE fallback (milestone 6): finds the paired device advertising sync
+/// mode, opens the known-host session and runs the normal sync over it.
+#[tauri::command]
+async fn sync_device_ble(app: AppHandle, device_id: String) -> CmdResult<SyncReport> {
+    let state = app.state::<AppState>();
+    let user = current_user(&state)?;
+    let row = state
+        .db
+        .lock()
+        .unwrap()
+        .get_device(user.id, &device_id)
+        .map_err(err)?
+        .ok_or("Unknown device.")?;
+    let key: PublicKeyBytes = state
+        .db
+        .lock()
+        .unwrap()
+        .device_public_key(user.id, &device_id)
+        .map_err(err)?
+        .ok_or("Only paired devices can sync over Bluetooth.")?
+        .try_into()
+        .map_err(|_| "Stored device key is damaged.".to_string())?;
+    let host = host_identity(&state, &user)?;
+
+    let connect = async {
+        let (found, mut peripherals) = ble::scan(Duration::from_secs(5)).await.map_err(err)?;
+        let advertising = found.iter().any(|d| d.device_id == device_id && d.sync_mode);
+        let peripheral = peripherals.remove(&device_id).filter(|_| advertising).ok_or(
+            "The Cardputer is not waiting for Bluetooth sync. On it, choose Settings > Sync > \
+             Sync over Bluetooth (or press Enter when WiFi fails), then try again.",
+        )?;
+        let link = BleLink::connect(peripheral.clone()).await.map_err(err)?;
+        let session = match Session::open(link, &host.secret).await {
+            Ok(s) if s.known && s.device_pk == key => s,
+            Ok(s) => {
+                s.into_channel().disconnect().await;
+                return Err("This Cardputer is paired with another desktop.".to_string());
+            }
+            Err(e) => {
+                use btleplug::api::Peripheral as _;
+                let _ = peripheral.disconnect().await;
+                return Err(e.to_string());
+            }
+        };
+        let device = BleDevice::new(session);
+        // The architecture doc asks for an estimate before the transfer.
+        if let Ok(manifest) = device.manifest(None).await {
+            let bytes: u64 = manifest.recordings.iter().filter(|r| !r.acked).map(|r| r.size).sum();
+            let _ = app.emit(
+                "ble-sync-estimate",
+                BleEstimate { device_id: device_id.clone(), bytes, secs: ble_sync::estimate_secs(bytes) },
+            );
+        }
+        Ok((device, None))
+    };
+    let (result, device) = run_sync_with(&app, &user, &row, false, connect).await;
+    if let Some(device) = device {
+        device.into_session().into_channel().disconnect().await;
+    }
     result
 }
 
@@ -739,6 +836,7 @@ pub fn run() {
             set_start_at_login,
             present_devices,
             sync_device,
+            sync_device_ble,
             list_recordings,
             rename_recording,
             delete_from_device,

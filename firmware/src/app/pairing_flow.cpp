@@ -27,6 +27,7 @@ void RecorderApp::openPairing()
         forceRedraw_ = true;
         return;
     }
+    releaseAudioBuffers();  // WiFi and BLE need the memory
     state_ = State::kPairing;
     pairPhase_ = PairPhase::kScanning;
     pairResult_ = "";
@@ -37,7 +38,9 @@ void RecorderApp::openPairing()
 
     // Scan before BLE starts, so the desktop can offer a list of networks
     // and the user never types an SSID on the Cardputer.
-    pairNetworks_ = wifi_.scan(kMaxNetworks);
+    // The radio stays on (idle) until closePairing, so the WiFi test never
+    // starts WiFi while Bluetooth is up.
+    pairNetworks_ = wifi_.scan(kMaxNetworks, true);
 
     CborWriter info;
     info.map(4)
@@ -125,6 +128,9 @@ void RecorderApp::startPairWifi(const std::string& ssid,
     pairJoinStartedMs_ = millis();
     message_ = String("Joining ") + ssid.c_str() + "...";
     forceRedraw_ = true;
+    Serial.printf("[PAIR] Testing WiFi. free heap=%u largest=%u\n",
+                  static_cast<unsigned>(ESP.getFreeHeap()),
+                  static_cast<unsigned>(ESP.getMaxAllocHeap()));
     if (ssid.empty() || !wifi_.begin(ssid.c_str(), password.c_str())) {
         // Reported as a failed join on the next service pass.
         pairJoinStartedMs_ = millis() - kPairWifiTimeoutMs - 1;
@@ -164,6 +170,11 @@ void RecorderApp::handleControlMessage(const std::string& frame)
                 peer_.paired &&
                 std::memcmp(pairHostKey_, peer_.hostPublicKey,
                             sizeof(pairHostKey_)) == 0;
+            if (pairForSync_ && !pairHostKnown_) {
+                sendPairError("not_paired");
+                resetPairSession();
+                return;
+            }
             pairGotHello_ = true;
 
             CborWriter reply;
@@ -222,9 +233,13 @@ void RecorderApp::handleControlMessage(const std::string& frame)
                 CborWriter session;
                 session.map(1).text("t").text("session");
                 sendSecure(session);
-                sendNetworks();
                 pairPhase_ = PairPhase::kSession;
-                message_ = "Connected. Waiting for WiFi.";
+                if (pairForSync_) {
+                    message_ = "Desktop connected.";
+                } else {
+                    sendNetworks();
+                    message_ = "Connected. Waiting for WiFi.";
+                }
             } else {
                 pairCode_ = pairingCode(pairHostKey_, identity_.publicKey(),
                                         nonce, pairDeviceNonce_);
@@ -247,6 +262,12 @@ void RecorderApp::handleControlMessage(const std::string& frame)
         return;
     }
     const std::string kind = message.text("t");
+    if (pairForSync_) {
+        if (kind == "req" && pairPhase_ == PairPhase::kSession) {
+            handleBleSyncRequest(message);
+        }
+        return;  // no pairing or WiFi changes over the sync fallback
+    }
     const std::string ssid = message.text("ssid");
     const std::string password = message.text("pass");
     if (ssid.size() > kMaxSsid || password.size() > kMaxPassword) {
@@ -340,8 +361,9 @@ void RecorderApp::servicePairing()
                 .text("ip")
                 .text(ip.c_str());
             sendSecure(result);
-            wifi_.end();
+            // WiFi goes off in closePairing, after Bluetooth.
             pairPhase_ = PairPhase::kDone;
+            Serial.printf("[PAIR] WiFi test %s\n", joined ? "ok" : "failed");
             pairResult_ =
                 joined ? String("WiFi OK: ") + pairJoinSsid_.c_str()
                        : String("WiFi failed: ") + pairJoinSsid_.c_str();

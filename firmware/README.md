@@ -57,6 +57,12 @@ esptool.py --chip esp32s3 --baud 460800 write_flash \
   0x0000 cardputer-adv-recorder-vX.Y.Z.bin
 ```
 
+To run it from [M5Launcher](https://github.com/bmorcelli/Launcher) instead,
+copy `cardputer-adv-recorder-vX.Y.Z-m5launcher.bin` (app only) to the SD card
+and install it from Launcher. Pairing is kept in NVS, so it survives switching
+apps, but anything that erases NVS (a full flash erase, changing Launcher's
+partition scheme) means pairing again.
+
 The serial monitor runs at 115200 baud. To run host-side tests (needs a host
 `gcc`/`g++` on `PATH`; on Windows, MinGW-w64 installed in a path without
 spaces):

@@ -5,6 +5,7 @@
 
 use p256::{SecretKey, pkcs8::EncodePrivateKey};
 use rand_core::OsRng;
+use sha2::{Digest, Sha256};
 
 use crate::pairing::{PublicKeyBytes, key_id, public_bytes};
 
@@ -19,16 +20,51 @@ pub struct HostIdentity {
     pub key_pkcs8_der: Vec<u8>,
 }
 
+/// Signs with RFC 6979 deterministic ECDSA, so the same key always yields
+/// the same certificate bytes.
+struct DeterministicKey {
+    signing: p256::ecdsa::SigningKey,
+    public: Vec<u8>,
+}
+
+impl rcgen::RemoteKeyPair for DeterministicKey {
+    fn public_key(&self) -> &[u8] {
+        &self.public
+    }
+
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, rcgen::Error> {
+        use p256::ecdsa::{Signature, signature::Signer};
+        let signature: Signature = self.signing.sign(msg);
+        Ok(signature.to_der().as_bytes().to_vec())
+    }
+
+    fn algorithm(&self) -> &'static rcgen::SignatureAlgorithm {
+        &rcgen::PKCS_ECDSA_P256_SHA256
+    }
+}
+
 impl HostIdentity {
     pub fn from_secret(secret: SecretKey) -> Result<Self, String> {
         let public = public_bytes(&secret);
         let id = key_id(&public);
         let key_pkcs8_der = secret.to_pkcs8_der().map_err(|e| e.to_string())?.as_bytes().to_vec();
-        let key_pair = rcgen::KeyPair::try_from(key_pkcs8_der.as_slice()).map_err(|e| e.to_string())?;
+        let key_pair = rcgen::KeyPair::from_remote(Box::new(DeterministicKey {
+            signing: p256::ecdsa::SigningKey::from(&secret),
+            public: public.to_vec(),
+        }))
+        .map_err(|e| e.to_string())?;
         let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).map_err(|e| e.to_string())?;
         params.distinguished_name.push(rcgen::DnType::CommonName, format!("cprec-host-{id}"));
-        // The device pins this exact certificate and does not check dates
-        // (its clock may be unset), so make the validity window wide.
+        // The device stores this certificate at pairing and accepts only
+        // those exact bytes (mbedtls trusts a self-signed client certificate
+        // only by exact match). So it must come out identical on every
+        // start: a serial derived from the key, fixed dates, and
+        // deterministic signatures. Dates are wide because the device does
+        // not check them (its clock may be unset).
+        let serial = Sha256::digest([b"cprec host cert".as_slice(), public.as_slice()].concat());
+        let mut serial = serial[..16].to_vec();
+        serial[0] &= 0x7f; // positive INTEGER
+        params.serial_number = Some(rcgen::SerialNumber::from_slice(&serial));
         params.not_before = rcgen::date_time_ymd(2000, 1, 1);
         params.not_after = rcgen::date_time_ymd(2099, 12, 31);
         let cert = params.self_signed(&key_pair).map_err(|e| e.to_string())?;
@@ -83,6 +119,18 @@ mod tests {
         let host = HostIdentity::from_secret(SecretKey::random(&mut OsRng)).unwrap();
         assert_eq!(certificate_public_key(&host.cert_der).unwrap(), host.public.to_vec());
         assert_eq!(host.id.len(), 16);
+    }
+
+    /// The device pins the exact bytes, so restarting the app must not
+    /// change them.
+    #[test]
+    fn certificate_is_identical_on_every_start() {
+        let secret = SecretKey::random(&mut OsRng);
+        let first = HostIdentity::from_secret(secret.clone()).unwrap();
+        let second = HostIdentity::from_secret(secret).unwrap();
+        assert_eq!(first.cert_der, second.cert_der);
+        let other = HostIdentity::from_secret(SecretKey::random(&mut OsRng)).unwrap();
+        assert_ne!(first.cert_der, other.cert_der);
     }
 
     /// Touches the real OS keychain, so it only runs on request:

@@ -6,6 +6,10 @@ namespace cardputer_recorder {
 
 bool RecorderApp::startRecording()
 {
+    if (!ensureAudioBuffers()) {
+        setError("E9: Not enough memory. Restart.");
+        return false;
+    }
     if (!storage_.isMounted() && !storage_.remount()) {
         setError("E1: microSD mount failed.");
         return false;

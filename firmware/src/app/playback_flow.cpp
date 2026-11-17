@@ -42,6 +42,11 @@ bool RecorderApp::startPlayback()
     if (files_.empty()) {
         return false;
     }
+    if (!ensureAudioBuffers()) {
+        message_ = "Not enough memory. Restart.";
+        forceRedraw_ = true;
+        return false;
+    }
     currentPath_ = "/" + files_[selected_];
     File file = storage_.open(currentPath_.c_str(), FILE_READ);
     if (!reader_.begin(file)) {

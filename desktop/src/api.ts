@@ -46,6 +46,7 @@ export interface NearbyDevice {
   name: string;
   pairing: boolean;
   hasPeer: boolean;
+  syncMode: boolean;
   rssi: number | null;
 }
 
@@ -119,6 +120,8 @@ export const api = {
     invoke<void>("set_device_address", { deviceId, address }),
   removeDevice: (deviceId: string) => invoke<void>("remove_device", { deviceId }),
   syncDevice: (deviceId: string) => invoke<SyncReport>("sync_device", { deviceId }),
+  /** BLE fallback: the Cardputer must be in Sync over Bluetooth. */
+  syncDeviceBle: (deviceId: string) => invoke<SyncReport>("sync_device_ble", { deviceId }),
 
   bleScan: () => invoke<NearbyDevice[]>("ble_scan"),
   pairStart: (deviceId: string) => invoke<PairStart>("pair_start", { deviceId }),
@@ -148,6 +151,17 @@ export function onSyncFinished(handler: (e: SyncFinished) => void): Promise<Unli
 /** Device ids announcing sync mode on the LAN. */
 export function onPresenceChanged(handler: (ids: string[]) => void): Promise<UnlistenFn> {
   return listen<string[]>("presence-changed", (e) => handler(e.payload));
+}
+
+export interface BleEstimate {
+  deviceId: string;
+  bytes: number;
+  secs: number;
+}
+
+/** Sent before a Bluetooth sync transfers anything. */
+export function onBleEstimate(handler: (e: BleEstimate) => void): Promise<UnlistenFn> {
+  return listen<BleEstimate>("ble-sync-estimate", (e) => handler(e.payload));
 }
 
 export function errorText(e: unknown): string {

@@ -259,6 +259,9 @@ void RecorderApp::setError(const String& message)
     } else if (state_ == State::kSyncing) {
         syncServer_.end();
         wifi_.end();
+        resetPairSession();
+        pairForSync_ = false;
+        ble_.end();
     } else if (state_ == State::kPairing) {
         resetPairSession();
         ble_.end();

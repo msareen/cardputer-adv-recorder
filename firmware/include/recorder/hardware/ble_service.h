@@ -12,16 +12,17 @@ class NimBLEServer;
 
 namespace cardputer_recorder {
 
-// GATT peripheral "Recorder Sync" (docs/ble-protocol.md). Runs only while
-// the device is in pairing mode; end() frees the stack. NimBLE callbacks
+// GATT peripheral "Recorder Sync" (docs/ble-protocol.md). Runs only in
+// pairing mode and the BLE sync fallback; end() frees the stack. NimBLE callbacks
 // run on the BLE host task and only queue data; all protocol logic runs in
 // the app's main loop through takeMessage()/send().
 class BleService {
 public:
     // `deviceId` is the 8-byte id; `info` the CBOR value of the Info
-    // characteristic.
+    // characteristic. `syncMode` advertises the BLE sync fallback instead
+    // of pairing mode.
     bool begin(const std::uint8_t deviceId[8], bool hasPeer,
-               const std::string& info);
+               const std::string& info, bool syncMode = false);
     void end();
     bool active() const { return active_; }
 
@@ -47,6 +48,7 @@ private:
     bool connected_ = false;
     bool disconnected_ = false;
     std::uint16_t mtu_ = 23;
+    std::uint16_t connHandle_ = 0;
 };
 
 }  // namespace cardputer_recorder

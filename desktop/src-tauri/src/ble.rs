@@ -13,8 +13,8 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::pairing::{
-    CONTROL_UUID, ControlChannel, INFO_UUID, MFG_COMPANY, MFG_FLAG_PAIRED, MFG_FLAG_PAIRING, PairError,
-    PairResult, Reassembler, SERVICE_UUID, fragment,
+    CONTROL_UUID, ControlChannel, INFO_UUID, MFG_COMPANY, MFG_FLAG_PAIRED, MFG_FLAG_PAIRING, MFG_FLAG_SYNC, PairError,
+    PairResult, Reassembler, fragment,
 };
 
 /// Writes use "write with response", which the OS splits into long writes
@@ -28,6 +28,8 @@ pub struct NearbyDevice {
     pub name: String,
     pub pairing: bool,
     pub has_peer: bool,
+    /// In the BLE sync fallback, waiting for its paired desktop.
+    pub sync_mode: bool,
     pub rssi: Option<i16>,
 }
 
@@ -63,7 +65,11 @@ async fn adapter() -> PairResult<Adapter> {
 /// was seen plus the peripherals, keyed by device id, for connecting.
 pub async fn scan(duration: Duration) -> PairResult<(Vec<NearbyDevice>, HashMap<String, Peripheral>)> {
     let central = adapter().await?;
-    central.start_scan(ScanFilter { services: vec![uuid(SERVICE_UUID)] }).await.map_err(transport)?;
+    // No service filter: Windows applies it to each packet separately, and
+    // the device id is in the scan response, which does not repeat the
+    // service UUID, so a filtered scan never sees it. Matching on our
+    // manufacturer data below is enough.
+    central.start_scan(ScanFilter::default()).await.map_err(transport)?;
     tokio::time::sleep(duration).await;
     let peripherals = central.peripherals().await.map_err(transport)?;
     let _ = central.stop_scan().await;
@@ -81,6 +87,7 @@ pub async fn scan(duration: Duration) -> PairResult<(Vec<NearbyDevice>, HashMap<
             name: props.local_name.unwrap_or_else(|| "Cardputer".into()),
             pairing: flags & MFG_FLAG_PAIRING != 0,
             has_peer: flags & MFG_FLAG_PAIRED != 0,
+            sync_mode: flags & MFG_FLAG_SYNC != 0,
             rssi: props.rssi,
         });
         by_id.insert(device_id, peripheral);

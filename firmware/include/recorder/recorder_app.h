@@ -62,6 +62,8 @@ private:
     enum class SyncPhase : std::uint8_t {
         kJoining,
         kServing,
+        kWifiFailed,  // offering the BLE fallback (Enter)
+        kBluetooth,   // BLE fallback: /v1 over the encrypted BLE channel
     };
 
     struct Settings {
@@ -157,6 +159,8 @@ private:
 
     // Sync (app/sync_flow.cpp).
     void startSync(bool automatic = false);
+    bool prepareSync();
+    SyncCallbacks makeSyncCallbacks();
     void serviceAutoSync();
     void refreshUnsyncedCount();
     void serviceSync();
@@ -176,6 +180,11 @@ private:
     RecordingIdentity makeRecordingIdentity();
     bool clockIsSet() const;
 
+    // BLE fallback transfer (app/ble_sync_flow.cpp).
+    void startBleSync();
+    void serviceBleSync();
+    void handleBleSyncRequest(const CborValue& message);
+
     // Pairing over BLE (app/pairing_flow.cpp).
     void openPairing();
     void servicePairing();
@@ -190,6 +199,12 @@ private:
     void sendNetworks();
     void startPairWifi(const std::string& ssid, const std::string& password);
     void forgetPairing();
+
+    // Memory handover between audio and the radios (app/memory.cpp).
+    bool ensureAudioBuffers();
+    void releaseAudioBuffers();
+    bool ensureSyncScratch();
+    void releaseSyncScratch();
 
     // M5Unified exposes two microphone queue slots. Extra buffers absorb SD
     // latency while a dedicated task writes completed blocks.
@@ -226,8 +241,12 @@ private:
     String deleteConfirmName_;
     String renameOriginalName_;
     String renameText_;
-    std::int16_t
-        audioBuffers_[kAudioBufferCount][kAudioSamplesPerBuffer] = {};
+    // Heap-allocated while recording or playing and released when sync or
+    // pairing starts: the radios and one TLS session need that memory
+    // (the StampS3 has no PSRAM). See ensureAudioBuffers().
+    std::int16_t* audioBuffers_[kAudioBufferCount] = {};
+    // SD read buffer for sync (SyncHandler), allocated only in sync mode.
+    std::uint8_t* syncScratch_ = nullptr;
     std::uint8_t captureActive_[kCaptureQueueDepth] = {};
     std::size_t captureActiveHead_ = 0;
     std::size_t captureActiveCount_ = 0;
@@ -264,6 +283,9 @@ private:
     DeviceIdentity identity_;
     WifiService wifi_;
     SyncServer syncServer_;
+    // Serves /v1 on the main loop in the BLE fallback.
+    SyncHandler bleSyncHandler_;
+    unsigned long syncLastDrawMs_ = 0;
     SyncIndex syncIndex_;
     bool syncIndexLoaded_ = false;
     RecordingIdentity currentIdentity_;
@@ -302,6 +324,9 @@ private:
     std::uint8_t pairDeviceNonce_[16] = {};
     bool pairGotHello_ = false;
     bool pairHostKnown_ = false;
+    // BLE is up for the sync fallback, not pairing: only the paired desktop
+    // may connect, and it sends /v1 requests instead of pair/set_wifi.
+    bool pairForSync_ = false;
     std::string pairCode_;
     String pairResult_;
     std::vector<std::string> pairNetworks_;
