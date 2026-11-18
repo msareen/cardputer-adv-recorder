@@ -14,6 +14,8 @@ Work is planned by the PDF's milestones (1 identity: `cprc` chunk + `/RECORDER.S
 
 ## Commands
 
+Full release (from the repo root, Windows/macOS/Linux): `python build.py` builds the firmware images and the desktop app into `dist/` (git-ignored): a double-clickable `Cardputer Sync.exe` plus NSIS installer on Windows, `Cardputer Sync.app` plus `.dmg` on macOS. Options: `--skip-firmware`, `--skip-desktop`, `--skip-tests`, `--no-installer`, `--universal` (macOS), `--with-mock`. It finds PlatformIO off PATH and uses a space-free MinGW for the native tests (`CPREC_MINGW` overrides).
+
 Firmware (run from `firmware/`; `pio` is in `~/AppData/Roaming/Python/Python312/Scripts`, not on PATH by default):
 ```sh
 platformio run -e cardputer-adv-recorder                    # build
@@ -36,12 +38,17 @@ cd src-tauri && cargo test -- --ignored keychain   # touches the real OS keychai
 cd src-tauri && cargo run --example sync_cli -- 127.0.0.1:8080 ./cli-library   # headless sync, e.g. against the mock
 cd src-tauri && cargo run --example discover_cli -- 10                         # list devices announcing over mDNS
 cd src-tauri && cargo run --example ble_scan_cli -- 8 [--all]                  # debug BLE pairing discovery (device in Pair with Desktop)
+cd src-tauri && cargo run --example mcp_serve_cli -- <wav folder> [port]       # agent MCP server over a folder of WAVs, throwaway DB; prints a token
 ```
 `tauri dev` serves the frontend on port 1420; a stale Vite from an earlier run blocks it ("Port 1420 is already in use").
 
 Mock device (from `tools/mock-device/`):
 ```sh
 cargo run -- --dir ./sdcard --port 8080 [--fault drop-mid|hash-mismatch|busy|low-battery] [--delete-after-sync] [--mdns]
+```
+MCP harness (from the repo root; calls a real model, so run it on demand, not in CI):
+```sh
+python tools/mcp-harness/mcp_harness.py [--model haiku] [--keep]   # Claude Code headless against mcp_serve_cli; checks files + tool calls
 ```
 No linters are configured.
 
@@ -70,6 +77,7 @@ Rust (`src-tauri/src`) does all device work; React (`src/`) is UI only, via Taur
 - BLE fallback: `ble_sync.rs` (`BleDevice<C: ControlChannel>`, implements `Device`), command `sync_device_ble`; `run_sync_with` takes a connect future so HTTPS and BLE share the event flow. BLE scans must not use a service filter (Windows drops the scan response that holds the device id).
 - Pairing: `pair_start` / `pair_ready` / `pair_finish` / `pair_cancel` hold a `Session<BleLink>` in `AppState`; `pairing.rs` is generic over `ControlChannel` and tested against a Rust reference device (`pairing::fake`). The host key per user is in the OS keychain (`identity.rs`), cached per login.
 - Hands-free: `discovery.rs` (mdns-sd browse on a thread; `Presence` decides due devices: once per appearance, failures retried after 60 s) feeds `discovery_worker` in `lib.rs`, which calls the same `run_sync` as the Sync now command. `run_sync` emits `sync-started` / `sync-progress` / `sync-finished`, and the UI follows those events rather than its own calls. Tray and close-to-tray (while logged in with auto-sync), `--hidden` start (autostart plugin), `settings.remembered_user` for stay logged in.
+- Agent access (`docs/agent-integration.md`): `agent_mcp.rs` serves MCP (rmcp, Streamable HTTP, 2026-07-28 plus legacy sessions) on `127.0.0.1:47800/mcp` when Settings > Agent access is on; `agents.rs` holds the logic (tokens, attributes, guidelines, recording/day views) and is shared with the Tauri commands. Bearer tokens are stored hashed (`agent_tokens`) and work only while their user is logged in; read-only vs write per token; `Origin` headers are refused. Agents write text "attributes" on a recording (file next to the WAV, `<stem>.<kind>.<ext>`) or a day (`<library>/_days/<YYYY-MM-DD>/<kind>.<ext>`), indexed in the `attributes` table. Audio goes out by local path or a 10-minute ticket URL (`/files/<ticket>`). The user's guidelines (settings key `agent_guidelines:<user id>`) reach agents via `get_guidelines` and the `process_recording` / `summarize_day` prompts. The app never deletes recordings through MCP and has no AI of its own.
 - Storage: audio is plain WAV in the user's library folder (`<library>/<device>/<YYYY-MM-DD>/<name>__<id8>.wav`, partials in `<library>/.partial/`); SQLite (`%APPDATA%\com.cprec.desktop\cprec.sqlite`) holds users, devices, recording metadata, settings. Migrations use `PRAGMA user_version` (`Db::migrate`). That database on this machine holds the user's real account: back it up and restore it around any end-to-end test that launches the app.
 - Cargo builds while `tauri dev` runs contend for the target-dir lock (and `tauri dev` rebuilds on every `src-tauri` change); run tests with `CARGO_TARGET_DIR=target-test cargo test` then.
 
