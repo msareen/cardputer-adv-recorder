@@ -2,6 +2,12 @@
 
 ## Unreleased (1.5.0-dev) - Sync
 
+### Boot screen
+
+- A splash screen (record dot, name, version, card status) shows at power-on and
+  reboot for one second while the microSD card mounts; any key skips the wait.
+  Not shown when waking from the screen saver (`app/splash.cpp`).
+
 ### Library
 
 - New recordings are named by local start time, `RECDDMMYYYY_HHMM.WAV`

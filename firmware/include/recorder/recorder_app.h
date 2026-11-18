@@ -131,6 +131,8 @@ private:
     void resetWakeConfirmation();
     void wakeScreen();
     void drawScreenSaver(unsigned long now);
+    void drawSplash(const char* status, unsigned long startedMs);
+    void holdSplash(const char* status, unsigned long startedMs);
     void deleteSelected();
     // Settings > Clear Recordings: deletes every unlocked recording after
     // a second Enter press.

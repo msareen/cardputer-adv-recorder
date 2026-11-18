@@ -30,13 +30,23 @@ void RecorderApp::begin()
     recorderCanvas.setTextWrap(false);
     resetScreenSaverTimer();
 
+    // Splash while the card mounts (see app/splash.cpp).
+    const unsigned long splashStartedMs = millis();
+    drawSplash("Starting...", splashStartedMs);
+    const char* splashStatus = "Ready";
     if (!storage_.begin()) {
         setError("Insert a writable microSD card.");
+        splashStatus = "No microSD card";
     } else {
+        drawSplash("Reading card...", splashStartedMs);
         scanFiles();
         refreshUnsyncedCount();
         message_ = "Hold G0 for settings.";
+        splashStatus = "SD card ready";
     }
+    holdSplash(splashStatus, splashStartedMs);
+    resetScreenSaverTimer();
+    forceRedraw_ = true;
     draw();
 }
 
