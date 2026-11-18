@@ -1,6 +1,7 @@
 #include "recorder/recorder_app.h"
 
 #include <algorithm>
+#include <ctime>
 
 #include "recorder/app/app_shared.h"
 #include "recorder/media/file_naming.h"
@@ -61,6 +62,56 @@ void RecorderApp::deleteSelected()
     deleteConfirm_ = false;
     deleteConfirmName_ = "";
     scanFiles();
+    forceRedraw_ = true;
+}
+void RecorderApp::clearAllRecordings()
+{
+    if (!storage_.isMounted()) {
+        setError("E1: microSD mount failed.");
+        return;
+    }
+    scanFiles();
+    Serial.printf("[CLEAR] clearing %u files, %u locked\n",
+                  static_cast<unsigned>(files_.size()), static_cast<unsigned>(lockedFiles_.size()));
+    // Locked recordings stay, as with single delete. The sync index is
+    // updated once at the end instead of once per file.
+    const bool indexReady = ensureSyncIndex();
+    bool indexChanged = false;
+    unsigned deleted = 0;
+    unsigned failed = 0;
+    for (const String& filename : files_) {
+        if (isLocked(filename)) {
+            continue;
+        }
+        const String path = "/" + filename;
+        if (!storage_.remove(path.c_str())) {
+            Serial.printf("[CLEAR] remove FAILED %s\n", path.c_str());
+            ++failed;
+            continue;
+        }
+        Serial.printf("[CLEAR] removed %s\n", path.c_str());
+        ++deleted;
+        if (indexReady && syncIndex_.removeByName(std::string(filename.c_str()))) {
+            indexChanged = true;
+        }
+    }
+    if (indexChanged) {
+        saveSyncIndex();
+    }
+    refreshUnsyncedCount();
+    deleteConfirm_ = false;
+    deleteConfirmName_ = "";
+    scanFiles();
+    selected_ = 0;
+    message_ = "Cleared " + String(deleted) + " recording" +
+               (deleted == 1 ? "" : "s");
+    if (failed > 0) {
+        message_ += ", " + String(failed) + " failed";
+    }
+    if (!lockedFiles_.empty()) {
+        message_ += "; locked kept";
+    }
+    message_ += ".";
     forceRedraw_ = true;
 }
 void RecorderApp::toggleLockSelected()
@@ -155,9 +206,10 @@ void RecorderApp::scanFiles()
         entry = directory.openNextFile();
     }
     directory.close();
+    // Newest first: timestamped names by date, then RECnnnn by number.
     std::sort(files_.begin(), files_.end(),
               [](const String& left, const String& right) {
-                  return left > right;
+                  return recordingListsBefore(left.c_str(), right.c_str());
               });
     loadLocks();
     bool prunedLocks = false;
@@ -183,6 +235,23 @@ void RecorderApp::scanFiles()
 }
 bool RecorderApp::chooseRecordingPath(char* path, std::size_t capacity)
 {
+    // RECDDMMYYYY_HHMM.WAV in local time once a sync has set the clock (the
+    // ADV has no RTC, so it is lost at power-off); RECnnnn.WAV before that.
+    Serial.printf("[NAME] clockSet=%d now=%ld tz=%d\n", clockIsSet(),
+                  static_cast<long>(std::time(nullptr)), static_cast<int>(tzOffsetMin_.load()));
+    if (clockIsSet()) {
+        const LocalDateTime local =
+            localDateTimeFrom(static_cast<std::int64_t>(std::time(nullptr)),
+                              tzOffsetMin_.load());
+        for (std::uint32_t suffix = 1; suffix <= 99; ++suffix) {
+            if (!makeTimestampRecordingPath(local, suffix, path, capacity)) {
+                break;
+            }
+            if (!storage_.exists(path)) {
+                return true;
+            }
+        }
+    }
     for (std::uint32_t index = 1; index <= 9999; ++index) {
         if (!makeRecordingPath(index, path, capacity)) {
             return false;

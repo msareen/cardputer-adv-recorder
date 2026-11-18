@@ -2,6 +2,20 @@
 
 ## Unreleased (1.5.0-dev) - Sync
 
+### Library
+
+- New recordings are named by local start time, `RECDDMMYYYY_HHMM.WAV`
+  (`_2`, `_3`... within the same minute), once a sync has set the clock.
+  The ADV has no RTC, so after power-off and before the next sync names
+  fall back to `REC0001.WAV`. The time zone comes from the desktop.
+- The library lists the newest recording first (by the date in the name;
+  `RECnnnn` files after the dated ones, highest number first).
+- Settings > Clear Recordings deletes every unlocked recording after a
+  second `Enter` (the first press shows how many, and how many are not
+  synced yet). `Esc`, `Left` or moving away cancels. Locked files are kept;
+  when all are locked nothing happens and the screen does not say why yet
+  (open question in `docs/open-questions.md`).
+
 ### Milestone 6: Bluetooth sync fallback and release
 
 - Sync over Bluetooth when WiFi is unavailable: offered on the sync screen

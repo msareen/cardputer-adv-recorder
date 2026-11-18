@@ -36,6 +36,10 @@
   and is restored after reboot.
 - Confirm no WIP settings are shown.
 - Confirm `Reset to Default` asks for confirmation before resetting settings.
+- Confirm `Clear Recordings` shows the count on the first `Enter`, deletes only on the
+  second, keeps locked files, and that `Esc` cancels.
+- After a desktop sync, record: the file is `RECDDMMYYYY_HHMM.WAV` in local time and
+  appears at the top of the library. After a power cycle (no sync), it is `RECnnnn.WAV`.
 - Confirm settings shows the current firmware version.
 - Enter `Screen Saver` settings and verify `When Home`, `While Recording`,
   `While Playing`, and `Triple-Press Wake` can be set independently.

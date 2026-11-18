@@ -399,7 +399,11 @@ SyncCallbacks RecorderApp::makeSyncCallbacks()
         syncDirty_ = true;
         return saved;
     };
-    callbacks.setClock = [](std::int64_t unixMs, std::int32_t) {
+    callbacks.setClock = [this](std::int64_t unixMs, std::int32_t tzOffsetMin) {
+        // Kept for naming recordings in local time (RECDDMMYYYY_HHMM.WAV).
+        if (tzOffsetMin > -24 * 60 && tzOffsetMin < 24 * 60) {
+            tzOffsetMin_ = tzOffsetMin;
+        }
         timeval now{};
         now.tv_sec = static_cast<time_t>(unixMs / 1000);
         now.tv_usec = static_cast<suseconds_t>((unixMs % 1000) * 1000);

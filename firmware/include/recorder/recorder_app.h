@@ -132,6 +132,9 @@ private:
     void wakeScreen();
     void drawScreenSaver(unsigned long now);
     void deleteSelected();
+    // Settings > Clear Recordings: deletes every unlocked recording after
+    // a second Enter press.
+    void clearAllRecordings();
     void toggleLockSelected();
     bool isLocked(const String& filename) const;
     void loadLocks();
@@ -231,6 +234,7 @@ private:
     std::uint8_t selectedSetting_ = 0;
     std::uint8_t helpPage_ = 0;
     bool resetSettingsConfirm_ = false;
+    bool clearRecordingsConfirm_ = false;
     SettingsPage settingsPage_ = SettingsPage::kMain;
     ScreenSaverState screenSaverState_ = ScreenSaverState::kAwake;
     bool screenSaverManual_ = false;
@@ -321,6 +325,8 @@ private:
     bool autoSyncBlocked_ = false;
     unsigned long lastAutoCheckMs_ = 0;
     std::uint32_t libraryUnsynced_ = 0;
+    // Local minus UTC, from the desktop with the time (set on the httpd task).
+    std::atomic<std::int32_t> tzOffsetMin_{0};
 
     BleService ble_;
     PeerStore peerStore_;

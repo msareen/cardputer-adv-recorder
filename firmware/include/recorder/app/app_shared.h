@@ -17,11 +17,12 @@ constexpr unsigned long kCaptureStartTimeoutMs = 1000;
 constexpr unsigned long kCaptureDrainTimeoutMs = 1000;
 constexpr unsigned long kSaveSettleMs = 750;
 constexpr unsigned long kRecordingStopGuardMs = 500;
-constexpr std::uint8_t kSettingsCount = 8;
+constexpr std::uint8_t kSettingsCount = 9;
 constexpr std::uint8_t kSettingMicMode = 4;
 constexpr std::uint8_t kSettingSync = 5;
-constexpr std::uint8_t kSettingReset = 6;
-constexpr std::uint8_t kSettingVersion = 7;
+constexpr std::uint8_t kSettingClearRecordings = 6;
+constexpr std::uint8_t kSettingReset = 7;
+constexpr std::uint8_t kSettingVersion = 8;
 // Settings > Mic Mode values (RecorderApp::Settings::micMode).
 constexpr std::uint8_t kMicModeNatural = 0;
 constexpr std::uint8_t kMicModeVoice = 1;

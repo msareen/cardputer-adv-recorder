@@ -109,6 +109,49 @@ void test_recording_name()
     TEST_ASSERT_FALSE(makeRecordingPath(1, nullptr, sizeof(path)));
 }
 
+void test_timestamp_recording_name()
+{
+    // 2026-11-18 09:00:00 UTC is 14:30 in India (+330 min).
+    const LocalDateTime india = localDateTimeFrom(1794992400, 330);
+    TEST_ASSERT_EQUAL(2026, india.year);
+    TEST_ASSERT_EQUAL(11, india.month);
+    TEST_ASSERT_EQUAL(18, india.day);
+    TEST_ASSERT_EQUAL(14, india.hour);
+    TEST_ASSERT_EQUAL(30, india.minute);
+    // West of UTC crosses back to the previous day.
+    const LocalDateTime ny = localDateTimeFrom(1794960000, -300);
+    TEST_ASSERT_EQUAL(17, ny.day);
+    TEST_ASSERT_EQUAL(19, ny.hour);
+
+    char path[32];
+    TEST_ASSERT_TRUE(makeTimestampRecordingPath(india, 1, path, sizeof(path)));
+    TEST_ASSERT_EQUAL_STRING("/REC18112026_1430.WAV", path);
+    TEST_ASSERT_TRUE(makeTimestampRecordingPath(india, 2, path, sizeof(path)));
+    TEST_ASSERT_EQUAL_STRING("/REC18112026_1430_2.WAV", path);
+    TEST_ASSERT_FALSE(makeTimestampRecordingPath(india, 100, path, sizeof(path)));
+    TEST_ASSERT_FALSE(makeTimestampRecordingPath(india, 1, path, 12));
+    TEST_ASSERT_FALSE(makeTimestampRecordingPath(LocalDateTime{}, 1, path, sizeof(path)));
+}
+
+void test_recordings_list_newest_first()
+{
+    std::uint64_t key = 0;
+    TEST_ASSERT_TRUE(timestampNameKey("/REC18112026_1430.WAV", &key));
+    TEST_ASSERT_TRUE(timestampNameKey("rec18112026_1430_2.wav", &key));
+    TEST_ASSERT_FALSE(timestampNameKey("REC0042.WAV", &key));
+    TEST_ASSERT_FALSE(timestampNameKey("REC18112026_1430.MP3", &key));
+    TEST_ASSERT_FALSE(timestampNameKey("REC32132026_2561.WAV", &key));
+
+    // Later date wins although its name sorts lower as text.
+    TEST_ASSERT_TRUE(recordingListsBefore("REC01122026_0900.WAV", "REC30112026_2300.WAV"));
+    TEST_ASSERT_TRUE(recordingListsBefore("REC18112026_1430_2.WAV", "REC18112026_1430.WAV"));
+    TEST_ASSERT_TRUE(recordingListsBefore("REC18112026_1431.WAV", "REC18112026_1430_9.WAV"));
+    // Dated before undated; undated by number, highest first.
+    TEST_ASSERT_TRUE(recordingListsBefore("REC01012026_0000.WAV", "REC9999.WAV"));
+    TEST_ASSERT_TRUE(recordingListsBefore("REC0002.WAV", "REC0001.WAV"));
+    TEST_ASSERT_FALSE(recordingListsBefore("REC0001.WAV", "REC0001.WAV"));
+}
+
 void test_missing_data_chunk_is_rejected()
 {
     const std::uint8_t wav[] = {
@@ -144,6 +187,8 @@ int main(int argc, char** argv)
     RUN_TEST(test_truncated_chunk_is_rejected);
     RUN_TEST(test_unsupported_encoding_is_rejected);
     RUN_TEST(test_recording_name);
+    RUN_TEST(test_timestamp_recording_name);
+    RUN_TEST(test_recordings_list_newest_first);
     RUN_TEST(test_missing_data_chunk_is_rejected);
     RUN_TEST(test_missing_format_chunk_is_rejected);
     return UNITY_END();

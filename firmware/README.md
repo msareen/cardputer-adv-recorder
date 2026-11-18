@@ -25,7 +25,9 @@ is not limited by available RAM.
 
 ## Features
 
-- Stream recordings to microSD as `/REC0001.WAV` through `/REC9999.WAV`.
+- Stream recordings to microSD as `/RECDDMMYYYY_HHMM.WAV` (local start time) once a
+  desktop sync has set the clock, or `/REC0001.WAV` through `/REC9999.WAV` before
+  that (the ADV has no battery-backed clock). The newest recording is listed first.
 - Browse, play, rename, lock, and delete WAV files from the device.
 - Pause, seek, and adjust playback volume while listening.
 - Show recording level, elapsed time, file size, battery status, SD free
@@ -184,6 +186,7 @@ applied immediately. Screen saver options are grouped under `Screen Saver`:
 | Seek Step | 5 sec, 10 sec, 20 sec, 60 sec |
 | Sync | Pair with Desktop, Paired With, WiFi, Delete After Sync, Auto-Sync Charging, Forget Pairing (see Sync above) |
 | Sync / Delete After Sync | Off (default), On. Deletes a file after the desktop's verified ack; never deletes locked files |
+| Clear Recordings | Deletes all unlocked recordings after a second `Enter` |
 | Reset to Default | Restores saved settings after confirmation |
 | Version | Current firmware version |
 | Screen Saver / When Home | Off, Dimmed Standby, Black |

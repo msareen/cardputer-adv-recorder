@@ -10,6 +10,7 @@ void RecorderApp::openSettings()
     selectedSetting_ = 0;
     settingsPage_ = SettingsPage::kMain;
     resetSettingsConfirm_ = false;
+    clearRecordingsConfirm_ = false;
     state_ = State::kSettings;
     message_ = "Settings";
     forceRedraw_ = true;
@@ -36,6 +37,12 @@ void RecorderApp::handleSettingsInput(const InputEvent& event)
             forceRedraw_ = true;
             return;
         }
+        if (clearRecordingsConfirm_) {
+            clearRecordingsConfirm_ = false;
+            message_ = "Clear canceled.";
+            forceRedraw_ = true;
+            return;
+        }
         if (settingsPage_ == SettingsPage::kScreenSaver ||
             settingsPage_ == SettingsPage::kSync) {
             selectedSetting_ = settingsPage_ == SettingsPage::kSync
@@ -55,6 +62,7 @@ void RecorderApp::handleSettingsInput(const InputEvent& event)
                                                     : kSettingsCount);
     if (event.up || event.down) {
         forgetConfirm_ = false;
+        clearRecordingsConfirm_ = false;
     }
     if (event.up) {
         resetSettingsConfirm_ = false;
@@ -89,6 +97,12 @@ void RecorderApp::handleSettingsInput(const InputEvent& event)
         }
         cycleSelectedSetting(1);
     } else if (event.left) {
+        if (clearRecordingsConfirm_) {
+            clearRecordingsConfirm_ = false;
+            message_ = "Clear canceled.";
+            forceRedraw_ = true;
+            return;
+        }
         if (resetSettingsConfirm_) {
             resetSettingsConfirm_ = false;
             message_ = "Reset canceled.";
@@ -199,6 +213,43 @@ void RecorderApp::cycleSelectedSetting(int offset)
                 kMicModeCount);
             break;
         case kSettingSync:
+            break;
+        case kSettingClearRecordings:
+            if (offset <= 0) {
+                break;
+            }
+            if (clearRecordingsConfirm_) {
+                clearRecordingsConfirm_ = false;
+                clearAllRecordings();
+                return;
+            } else {
+                scanFiles();
+                std::size_t unlocked = 0;
+                for (const String& name : files_) {
+                    if (!isLocked(name)) {
+                        ++unlocked;
+                    }
+                }
+                if (unlocked == 0) {
+                    // Not shown on the Settings screen yet: see
+                    // docs/open-questions.md.
+                    message_ = files_.empty() ? "No recordings to clear."
+                                              : "All recordings are locked.";
+                    Serial.printf("[CLEAR] nothing to clear: %u files, all locked\n",
+                                  static_cast<unsigned>(files_.size()));
+                } else {
+                    clearRecordingsConfirm_ = true;
+                    message_ = "Delete " + String(static_cast<unsigned>(unlocked)) +
+                               " recording" + (unlocked == 1 ? "" : "s");
+                    if (libraryUnsynced_ > 0) {
+                        message_ += " (" + String(static_cast<unsigned>(libraryUnsynced_)) +
+                                    " not synced)";
+                    }
+                    message_ += "? ENTER again.";
+                    Serial.printf("[CLEAR] armed: %u unlocked of %u files\n",
+                                  static_cast<unsigned>(unlocked), static_cast<unsigned>(files_.size()));
+                }
+            }
             break;
         case kSettingReset:
             if (resetSettingsConfirm_) {
@@ -354,6 +405,8 @@ String RecorderApp::settingValueText(std::uint8_t index) const
             return micModeText(settings_.micMode);
         case kSettingSync:
             return ">";
+        case kSettingClearRecordings:
+            return clearRecordingsConfirm_ ? "CONFIRM?" : "";
         case kSettingReset:
             return resetSettingsConfirm_ ? "CONFIRM?" : "";
         case kSettingVersion:
