@@ -35,7 +35,7 @@ export function AgentAccess() {
   const [guidelines, setGuidelines] = useState<Guidelines>({ general: "", recording: "", day: "" });
   const [tokenName, setTokenName] = useState("Claude Code");
   const [canWrite, setCanWrite] = useState(true);
-  const [newToken, setNewToken] = useState<string | null>(null);
+  const [newToken, setNewToken] = useState<{ id: number; token: string } | null>(null);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
 
@@ -68,7 +68,7 @@ export function AgentAccess() {
     setError("");
     try {
       const created = await api.createAgentToken(tokenName, canWrite);
-      setNewToken(created.token);
+      setNewToken({ id: created.row.id, token: created.token });
       await load();
     } catch (err) {
       setError(errorText(err));
@@ -79,6 +79,9 @@ export function AgentAccess() {
     if (!window.confirm(`Revoke "${name}"? Agents using it lose access immediately.`)) return;
     try {
       await api.revokeAgentToken(id);
+      // The one-time secret panel belongs to the token just created: if that
+      // one is revoked, its secret and setup snippets must go too.
+      setNewToken((shown) => (shown?.id === id ? null : shown));
       await load();
     } catch (e) {
       setError(errorText(e));
@@ -157,8 +160,8 @@ export function AgentAccess() {
           <p>
             <b>Copy this token now;</b> it is not shown again.
           </p>
-          <code className="block">{newToken}</code>
-          {Object.entries(snippets(url, newToken)).map(([label, text]) => (
+          <code className="block">{newToken.token}</code>
+          {Object.entries(snippets(url, newToken.token)).map(([label, text]) => (
             <div key={label}>
               <div className="small muted">{label}</div>
               <pre className="block">{text}</pre>
