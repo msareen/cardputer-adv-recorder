@@ -54,6 +54,48 @@ An incomplete recording is discarded on capture or write failure.
 The reader handles unknown RIFF chunks and does not require a fixed data
 offset. Playback is limited to mono 16-bit PCM.
 
+## File format: why WAV
+
+Recordings stay 16 kHz mono 16-bit WAV (32 KB/s, about 115 MB an hour). WAV
+came from upstream rather than a comparison; it was reviewed against
+compressed formats in November 2026 and kept.
+
+WAV fits this board: encoding costs nothing, `VoiceProcessor` works on the
+PCM samples directly, the `cprc` chunk relies on RIFF readers skipping
+unknown chunks, and a streaming header (size `UINT32_MAX`) lets the reader
+fall back to the file size. The cost is size: sync time over WiFi and, much
+more, over the BLE fallback.
+
+| Format | Size vs WAV | Notes |
+|---|---|---|
+| WAV (PCM, current) | 1 | lossless, no encoder |
+| IMA ADPCM in WAV | 1/4 | tiny encoder state, still RIFF and streaming; slight loss, fine for speech. Cheapest change if size matters |
+| Opus in Ogg (16-24 kbps) | ~1/10-1/15 | best for speech; Ogg pages survive truncation, `cprc` could go in OpusTags. RAM is unproven (below) |
+| AAC in MP4/M4A | ~1/8 | heavier than Opus for speech; an MP4 cut off before its `moov` atom does not play |
+
+Opus was not adopted because it does not fit the memory budget with any
+certainty. Free heap while recording is about 83 KB (see
+`docs/hardware-findings.md`), and the StampS3 has no PSRAM. Espressif's
+[`esp_audio_codec`](https://components.espressif.com/components/espressif/esp_audio_codec)
+lists an Opus encoder but publishes no Opus memory or CPU figures; ESPHome's
+[`micro-opus`](https://components.espressif.com/components/esphome/micro-opus)
+reserves a 120 KB pseudostack per thread and says SILK encoding on the S3 is
+real-time only with the fixed-point build. Playback would need a decoder too,
+and none of this has been measured on the device. Whether `esp_audio_codec`
+builds under this Arduino setup was not checked.
+
+A compressed format would not improve quality: WAV is already lossless, and
+quality is set by the microphone, the PGA, Mic Mode and the 16 kHz rate
+(content up to 8 kHz). Opus would only make a higher sample rate cheap in
+size, which helps only if the microphone delivers anything above 8 kHz.
+
+If this is revisited, first build a test that encodes Ogg Opus on the device
+and logs free heap and CPU. A format option would also touch the `.WAV`
+assumptions in `app/file_browser.cpp`, `media/file_naming.cpp`,
+`app/recorder_ui.cpp`, the `audio/wav` content type in `sync/sync_handler.cpp`
+and `sync/sync_server.cpp`, the desktop's `library.rs`, `sync.rs` and
+`Library.tsx`, the mock device, and the PDF's protocol and data model.
+
 ## microSD
 
 Cardputer ADV microSD uses SCK 40, MISO 39, MOSI 14, and CS 12. The firmware
