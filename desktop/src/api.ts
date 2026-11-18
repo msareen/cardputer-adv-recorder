@@ -102,7 +102,57 @@ export interface SyncProgress {
   event: SyncEvent;
 }
 
+export interface AgentToken {
+  id: number;
+  userId: number;
+  name: string;
+  canWrite: boolean;
+  createdMs: number;
+  lastUsedMs: number | null;
+}
+
+export interface Guidelines {
+  general: string;
+  recording: string;
+  day: string;
+}
+
+export interface AgentSettings {
+  enabled: boolean;
+  port: number;
+  /** The MCP endpoint while the server runs. */
+  url: string | null;
+  error: string | null;
+  tokens: AgentToken[];
+  guidelines: Guidelines;
+}
+
+/** Text an agent attached to a recording ("<deviceId>/<id>") or a day ("YYYY-MM-DD"). */
+export interface Attribute {
+  scope: "recording" | "day";
+  target: string;
+  kind: string;
+  mime: string;
+  path: string;
+  size: number;
+  sha256: string;
+  author: string;
+  updatedMs: number;
+}
+
 export const api = {
+  agentSettings: () => invoke<AgentSettings>("agent_settings"),
+  setAgentAccess: (enabled: boolean, port: number) => invoke<AgentSettings>("set_agent_access", { enabled, port }),
+  createAgentToken: (name: string, canWrite: boolean) =>
+    invoke<{ token: string; row: AgentToken }>("create_agent_token", { name, canWrite }),
+  revokeAgentToken: (id: number) => invoke<void>("revoke_agent_token", { id }),
+  setAgentGuidelines: (guidelines: Guidelines) => invoke<void>("set_agent_guidelines", { guidelines }),
+  listAttributes: () => invoke<Attribute[]>("list_attributes"),
+  readAttribute: (scope: string, target: string, kind: string) =>
+    invoke<string>("read_attribute", { scope, target, kind }),
+  deleteAttribute: (scope: string, target: string, kind: string) =>
+    invoke<void>("delete_attribute", { scope, target, kind }),
+
   session: () => invoke<User | null>("session"),
   createAccount: (username: string, password: string) =>
     invoke<User>("create_account", { username, password }),
@@ -165,6 +215,11 @@ export interface BleEstimate {
 /** Sent before a Bluetooth sync transfers anything. */
 export function onBleEstimate(handler: (e: BleEstimate) => void): Promise<UnlistenFn> {
   return listen<BleEstimate>("ble-sync-estimate", (e) => handler(e.payload));
+}
+
+/** An agent wrote or deleted an attribute. */
+export function onAttributesChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("attributes-changed", () => handler());
 }
 
 export function errorText(e: unknown): string {

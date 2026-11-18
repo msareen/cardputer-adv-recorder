@@ -187,6 +187,35 @@ impl Db {
             }
             self.conn.execute_batch("PRAGMA user_version = 2;")?;
         }
+        if version < 3 {
+            // Agent access: tokens for the local MCP server, and attributes
+            // (transcripts, summaries...) agents attach to recordings and days.
+            self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS agent_tokens (
+                    id           INTEGER PRIMARY KEY,
+                    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    name         TEXT NOT NULL,
+                    token_hash   TEXT NOT NULL UNIQUE,
+                    can_write    INTEGER NOT NULL,
+                    created_ms   INTEGER NOT NULL,
+                    last_used_ms INTEGER
+                 );
+                 CREATE TABLE IF NOT EXISTS attributes (
+                    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    scope      TEXT NOT NULL,
+                    target     TEXT NOT NULL,
+                    kind       TEXT NOT NULL,
+                    mime       TEXT NOT NULL,
+                    path       TEXT NOT NULL,
+                    size       INTEGER NOT NULL,
+                    sha256     TEXT NOT NULL,
+                    author     TEXT NOT NULL,
+                    updated_ms INTEGER NOT NULL,
+                    PRIMARY KEY (user_id, scope, target, kind)
+                 );
+                 PRAGMA user_version = 3;",
+            )?;
+        }
         Ok(())
     }
 
@@ -497,6 +526,156 @@ impl Db {
         )?;
         Ok(())
     }
+
+    // --- agent access --------------------------------------------------
+
+    pub fn insert_agent_token(&self, user_id: i64, name: &str, token_hash: &str, can_write: bool, now_ms: i64) -> DbResult<AgentToken> {
+        self.conn.execute(
+            "INSERT INTO agent_tokens (user_id, name, token_hash, can_write, created_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![user_id, name, token_hash, can_write as i64, now_ms],
+        )?;
+        Ok(AgentToken {
+            id: self.conn.last_insert_rowid(),
+            user_id,
+            name: name.to_string(),
+            can_write,
+            created_ms: now_ms,
+            last_used_ms: None,
+        })
+    }
+
+    pub fn list_agent_tokens(&self, user_id: i64) -> DbResult<Vec<AgentToken>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, user_id, name, can_write, created_ms, last_used_ms FROM agent_tokens
+             WHERE user_id = ?1 ORDER BY created_ms",
+        )?;
+        let rows = stmt.query_map(params![user_id], agent_token_from_row)?;
+        rows.collect()
+    }
+
+    pub fn agent_token_by_hash(&self, token_hash: &str) -> DbResult<Option<AgentToken>> {
+        self.conn
+            .query_row(
+                "SELECT id, user_id, name, can_write, created_ms, last_used_ms FROM agent_tokens WHERE token_hash = ?1",
+                params![token_hash],
+                agent_token_from_row,
+            )
+            .optional()
+    }
+
+    pub fn touch_agent_token(&self, id: i64, now_ms: i64) -> DbResult<()> {
+        self.conn.execute("UPDATE agent_tokens SET last_used_ms = ?2 WHERE id = ?1", params![id, now_ms])?;
+        Ok(())
+    }
+
+    pub fn delete_agent_token(&self, user_id: i64, id: i64) -> DbResult<()> {
+        self.conn.execute("DELETE FROM agent_tokens WHERE user_id = ?1 AND id = ?2", params![user_id, id])?;
+        Ok(())
+    }
+
+    pub fn upsert_attribute(&self, user_id: i64, a: &AttributeRow) -> DbResult<()> {
+        self.conn.execute(
+            "INSERT INTO attributes (user_id, scope, target, kind, mime, path, size, sha256, author, updated_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT (user_id, scope, target, kind) DO UPDATE SET
+                mime = excluded.mime, path = excluded.path, size = excluded.size, sha256 = excluded.sha256,
+                author = excluded.author, updated_ms = excluded.updated_ms",
+            params![
+                user_id,
+                a.scope,
+                a.target,
+                a.kind,
+                a.mime,
+                a.path,
+                a.size as i64,
+                a.sha256,
+                a.author,
+                a.updated_ms
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_attribute(&self, user_id: i64, scope: &str, target: &str, kind: &str) -> DbResult<Option<AttributeRow>> {
+        self.conn
+            .query_row(
+                "SELECT * FROM attributes WHERE user_id = ?1 AND scope = ?2 AND target = ?3 AND kind = ?4",
+                params![user_id, scope, target, kind],
+                attribute_from_row,
+            )
+            .optional()
+    }
+
+    /// All attributes of a user (no content), for listings.
+    pub fn list_attributes(&self, user_id: i64) -> DbResult<Vec<AttributeRow>> {
+        let mut stmt =
+            self.conn.prepare("SELECT * FROM attributes WHERE user_id = ?1 ORDER BY scope, target, kind")?;
+        let rows = stmt.query_map(params![user_id], attribute_from_row)?;
+        rows.collect()
+    }
+
+    pub fn delete_attribute(&self, user_id: i64, scope: &str, target: &str, kind: &str) -> DbResult<()> {
+        self.conn.execute(
+            "DELETE FROM attributes WHERE user_id = ?1 AND scope = ?2 AND target = ?3 AND kind = ?4",
+            params![user_id, scope, target, kind],
+        )?;
+        Ok(())
+    }
+}
+
+/// A token an agent presents to the local MCP server. Only its hash is
+/// stored; the token itself is shown once, when created.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentToken {
+    pub id: i64,
+    pub user_id: i64,
+    pub name: String,
+    pub can_write: bool,
+    pub created_ms: i64,
+    pub last_used_ms: Option<i64>,
+}
+
+fn agent_token_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentToken> {
+    Ok(AgentToken {
+        id: row.get("id")?,
+        user_id: row.get("user_id")?,
+        name: row.get("name")?,
+        can_write: row.get::<_, i64>("can_write")? != 0,
+        created_ms: row.get("created_ms")?,
+        last_used_ms: row.get("last_used_ms")?,
+    })
+}
+
+/// Text an agent attached to a recording (`scope` "recording", `target`
+/// "<device id>/<recording id>") or to a day (`scope` "day", `target`
+/// "YYYY-MM-DD"). The content lives in a file at `path`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AttributeRow {
+    pub scope: String,
+    pub target: String,
+    pub kind: String,
+    pub mime: String,
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
+    pub author: String,
+    pub updated_ms: i64,
+}
+
+fn attribute_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AttributeRow> {
+    Ok(AttributeRow {
+        scope: row.get("scope")?,
+        target: row.get("target")?,
+        kind: row.get("kind")?,
+        mime: row.get("mime")?,
+        path: row.get("path")?,
+        size: row.get::<_, i64>("size")? as u64,
+        sha256: row.get("sha256")?,
+        author: row.get("author")?,
+        updated_ms: row.get("updated_ms")?,
+    })
 }
 
 #[cfg(test)]

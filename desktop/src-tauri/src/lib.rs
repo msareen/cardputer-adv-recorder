@@ -1,6 +1,8 @@
 //! Cardputer Sync desktop app. Rust owns all device work (BLE, HTTPS, files,
 //! SQLite, accounts, keys); React only renders and calls the commands below.
 
+pub mod agent_mcp;
+pub mod agents;
 pub mod auth;
 pub mod ble;
 pub mod ble_sync;
@@ -30,8 +32,9 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use crate::{
+    agents::{AgentCore, Guidelines},
     ble::{BleLink, NearbyDevice},
-    db::{Db, DeviceRow, RecordingRow, User},
+    db::{AgentToken, AttributeRow, Db, DeviceRow, RecordingRow, User},
     ble_sync::BleDevice,
     device::{Device, HttpDevice, normalize_address, normalize_paired_address},
     discovery::{DiscoveryEvent, Presence},
@@ -47,8 +50,8 @@ struct Pairing {
 }
 
 pub struct AppState {
-    db: Mutex<Db>,
-    session: Mutex<Option<User>>,
+    db: Arc<Mutex<Db>>,
+    session: Arc<Mutex<Option<User>>>,
     /// The logged-in user's host key, loaded from the keychain on first use.
     host: Mutex<Option<Arc<HostIdentity>>>,
     /// Device ids with a sync in flight, so one device never syncs twice
@@ -61,9 +64,21 @@ pub struct AppState {
     presence: Mutex<Presence>,
     /// Keeps mDNS browsing alive.
     mdns: Mutex<Option<mdns_sd::ServiceDaemon>>,
+    /// Agent access: tokens, attributes, guidelines (shared with the MCP server).
+    agents: Arc<agents::AgentCore>,
+    /// The local MCP server while it runs, or why it could not start.
+    mcp: tokio::sync::Mutex<McpState>,
+}
+
+#[derive(Default)]
+struct McpState {
+    server: Option<agent_mcp::RunningServer>,
+    error: Option<String>,
 }
 
 const REMEMBERED_USER: &str = "remembered_user";
+const MCP_ENABLED: &str = "mcp_enabled";
+const MCP_PORT: &str = "mcp_port";
 const MAIN_WINDOW: &str = "main";
 const TRAY_ID: &str = "main";
 
@@ -781,6 +796,136 @@ async fn delete_from_device(state: State<'_, AppState>, device_id: String, id: S
     state.db.lock().unwrap().set_recording_on_device(user.id, &device_id, &id, false).map_err(err)
 }
 
+// --- agent access (local MCP server) ---------------------------------------------
+
+fn mcp_port(state: &AppState) -> u16 {
+    state
+        .db
+        .lock()
+        .unwrap()
+        .setting(MCP_PORT)
+        .ok()
+        .flatten()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(agent_mcp::DEFAULT_PORT)
+}
+
+/// Stops the server if it runs, then starts it again if agent access is on.
+async fn restart_mcp(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let enabled = state.db.lock().unwrap().setting(MCP_ENABLED).ok().flatten().as_deref() == Some("1");
+    let port = mcp_port(&state);
+    let mut mcp = state.mcp.lock().await;
+    if let Some(server) = mcp.server.take() {
+        server.stop().await;
+    }
+    mcp.error = None;
+    if enabled {
+        match agent_mcp::start(state.agents.clone(), port).await {
+            Ok(server) => mcp.server = Some(server),
+            Err(e) => mcp.error = Some(format!("Could not listen on 127.0.0.1:{port}: {e}")),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSettings {
+    enabled: bool,
+    port: u16,
+    /// The endpoint agents connect to, while the server runs.
+    url: Option<String>,
+    error: Option<String>,
+    tokens: Vec<AgentToken>,
+    guidelines: Guidelines,
+}
+
+async fn agent_settings_for(state: &AppState, user: &User) -> CmdResult<AgentSettings> {
+    let enabled = state.db.lock().unwrap().setting(MCP_ENABLED).map_err(err)?.as_deref() == Some("1");
+    let (url, error) = {
+        let mcp = state.mcp.lock().await;
+        (mcp.server.as_ref().map(|s| format!("http://127.0.0.1:{}/mcp", s.port)), mcp.error.clone())
+    };
+    let tokens = state.db.lock().unwrap().list_agent_tokens(user.id).map_err(err)?;
+    Ok(AgentSettings {
+        enabled,
+        port: mcp_port(state),
+        url,
+        error,
+        tokens,
+        guidelines: state.agents.guidelines(user.id).map_err(err)?,
+    })
+}
+
+#[tauri::command]
+async fn agent_settings(state: State<'_, AppState>) -> CmdResult<AgentSettings> {
+    let user = current_user(&state)?;
+    agent_settings_for(&state, &user).await
+}
+
+/// Turns the MCP server on or off (app-wide) and sets its port.
+#[tauri::command]
+async fn set_agent_access(app: AppHandle, enabled: bool, port: u16) -> CmdResult<AgentSettings> {
+    let state = app.state::<AppState>();
+    let user = current_user(&state)?;
+    if port < 1024 {
+        return Err("Choose a port from 1024 to 65535.".into());
+    }
+    {
+        let db = state.db.lock().unwrap();
+        db.set_setting(MCP_ENABLED, Some(if enabled { "1" } else { "0" })).map_err(err)?;
+        db.set_setting(MCP_PORT, Some(&port.to_string())).map_err(err)?;
+    }
+    restart_mcp(&app).await;
+    agent_settings_for(&state, &user).await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewAgentToken {
+    /// Shown once; only its hash is stored.
+    token: String,
+    row: AgentToken,
+}
+
+#[tauri::command]
+fn create_agent_token(state: State<'_, AppState>, name: String, can_write: bool) -> CmdResult<NewAgentToken> {
+    let user = current_user(&state)?;
+    let (token, row) = state.agents.create_token(user.id, &name, can_write, sync::now_ms()).map_err(err)?;
+    Ok(NewAgentToken { token, row })
+}
+
+#[tauri::command]
+fn revoke_agent_token(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    let user = current_user(&state)?;
+    state.db.lock().unwrap().delete_agent_token(user.id, id).map_err(err)
+}
+
+#[tauri::command]
+fn set_agent_guidelines(state: State<'_, AppState>, guidelines: Guidelines) -> CmdResult<()> {
+    let user = current_user(&state)?;
+    state.agents.set_guidelines(user.id, &guidelines).map_err(err)
+}
+
+/// Every attribute of the user (no content), for the library.
+#[tauri::command]
+fn list_attributes(state: State<'_, AppState>) -> CmdResult<Vec<AttributeRow>> {
+    let user = current_user(&state)?;
+    state.db.lock().unwrap().list_attributes(user.id).map_err(err)
+}
+
+#[tauri::command]
+fn read_attribute(state: State<'_, AppState>, scope: String, target: String, kind: String) -> CmdResult<String> {
+    let user = current_user(&state)?;
+    state.agents.read_attribute(user.id, &scope, &target, &kind).map(|(_, content)| content).map_err(err)
+}
+
+#[tauri::command]
+fn delete_attribute(state: State<'_, AppState>, scope: String, target: String, kind: String) -> CmdResult<()> {
+    let user = current_user(&state)?;
+    state.agents.delete_attribute(None, user.id, &scope, &target, &kind).map_err(err)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -794,15 +939,28 @@ pub fn run() {
                 .setting(REMEMBERED_USER)?
                 .and_then(|id| id.parse::<i64>().ok())
                 .and_then(|id| db.user_by_id(id).ok().flatten());
+            let mcp_enabled = db.setting(MCP_ENABLED)?.as_deref() == Some("1");
+            let db = Arc::new(Mutex::new(db));
+            let session = Arc::new(Mutex::new(None));
+            let emitter = app.handle().clone();
+            let agents = Arc::new(AgentCore::new(
+                db.clone(),
+                session.clone(),
+                Arc::new(move || {
+                    let _ = emitter.emit("attributes-changed", ());
+                }),
+            ));
             app.manage(AppState {
-                db: Mutex::new(db),
-                session: Mutex::new(None),
+                db,
+                session,
                 host: Mutex::new(None),
                 syncing: Mutex::new(HashSet::new()),
                 nearby: Mutex::new(HashMap::new()),
                 pairing: tokio::sync::Mutex::new(None),
                 presence: Mutex::new(Presence::default()),
                 mdns: Mutex::new(None),
+                agents,
+                mcp: tokio::sync::Mutex::new(McpState::default()),
             });
             let handle = app.handle().clone();
             if let Some(user) = &remembered {
@@ -816,6 +974,12 @@ pub fn run() {
                     tauri::async_runtime::spawn(discovery_worker(handle.clone(), events));
                 }
                 Err(e) => eprintln!("mDNS discovery unavailable: {e}"),
+            }
+            if mcp_enabled {
+                let handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    restart_mcp(&handle).await;
+                });
             }
 
             // Started at login: stay in the tray if someone is logged in.
@@ -859,7 +1023,24 @@ pub fn run() {
             list_recordings,
             rename_recording,
             delete_from_device,
+            agent_settings,
+            set_agent_access,
+            create_agent_token,
+            revoke_agent_token,
+            set_agent_guidelines,
+            list_attributes,
+            read_attribute,
+            delete_attribute,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // macOS: clicking the Dock icon brings back a window that was
+            // closed to the tray.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main_window(app);
+            }
+            let _ = (app, event);
+        });
 }

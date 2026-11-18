@@ -651,3 +651,108 @@ select {
 .dev-add[open] summary {
   margin-bottom: 8px;
 }
+
+/* --- agent attributes and agent access ------------------------------------ */
+
+.attr-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.rec-main > .attr-chips {
+  margin: 4px 0 0;
+}
+
+.attr-chip {
+  padding: 0 8px;
+  font-size: 11px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+}
+
+.attr-viewer {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.attr-viewer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.attr-viewer-head .spacer {
+  flex: 1;
+}
+
+.attr-content {
+  white-space: pre-wrap;
+  max-height: 50vh;
+  overflow: auto;
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+
+.agent-access {
+  margin-top: 28px;
+  max-width: 720px;
+}
+
+.agent-access h4 {
+  margin: 18px 0 6px;
+}
+
+.agent-access .row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+.agent-access label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-access input.port {
+  width: 80px;
+}
+
+.agent-access textarea {
+  width: 100%;
+  font: inherit;
+}
+
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.token-row > span:first-child {
+  flex: 1;
+}
+
+pre.block,
+code.block {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  user-select: all;
+}
