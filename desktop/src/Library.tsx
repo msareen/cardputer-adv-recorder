@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, errorText, onAttributesChanged, type Attribute, type Recording } from "./api";
 import { formatBytes, formatDay, formatDuration, formatTime } from "./format";
+import { DayView, RecordingView, isoDay, recordingTitle as title, recordingWhen as when, sortAttributes } from "./Details";
 
 interface Props {
   recordings: Recording[];
@@ -10,19 +11,11 @@ interface Props {
   onChanged: () => void;
 }
 
-function title(r: Recording) {
-  return r.displayName ?? r.name.replace(/\.wav$/i, "");
-}
-
-function when(r: Recording) {
-  return r.createdMs > 0 ? r.createdMs : r.syncedAtMs;
-}
-
-/** Local YYYY-MM-DD, the key day attributes use (same as the library folders). */
-function isoDay(ms: number) {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+/** What the Library shows: the list, one day, or one recording. */
+type View =
+  | { kind: "list" }
+  | { kind: "day"; day: string }
+  | { kind: "recording"; key: string; attrKind?: string; from?: View };
 
 function attrKey(scope: string, target: string) {
   return `${scope}:${target}`;
@@ -33,7 +26,7 @@ function AttributeChips({ items, onOpen }: { items: Attribute[] | undefined; onO
   if (!items?.length) return null;
   return (
     <span className="attr-chips">
-      {items.map((a) => (
+      {sortAttributes(items).map((a) => (
         <button key={a.kind} className="attr-chip" title={`${a.mime} · by ${a.author}`} onClick={() => onOpen(a)}>
           {a.kind}
         </button>
@@ -48,7 +41,7 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [attributes, setAttributes] = useState<Map<string, Attribute[]>>(new Map());
-  const [viewing, setViewing] = useState<{ attr: Attribute; content: string } | null>(null);
+  const [view, setView] = useState<View>({ kind: "list" });
 
   const loadAttributes = useCallback(async () => {
     try {
@@ -71,23 +64,17 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
     };
   }, [loadAttributes, recordings]);
 
-  async function openAttribute(attr: Attribute) {
-    try {
-      setViewing({ attr, content: await api.readAttribute(attr.scope, attr.target, attr.kind) });
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }
+  const openRecording = (r: Recording, attrKind?: string, from: View = view) =>
+    setView({ kind: "recording", key: `${r.deviceId}/${r.id}`, attrKind, from });
 
-  async function deleteAttribute(attr: Attribute) {
-    if (!window.confirm(`Delete the "${attr.kind}" attribute? The recording is not affected.`)) return;
-    try {
-      await api.deleteAttribute(attr.scope, attr.target, attr.kind);
-      setViewing(null);
-      loadAttributes();
-    } catch (e) {
-      setError(errorText(e));
+  /** A chip in the list: recording attributes open the recording, day ones the day. */
+  function openAttribute(attr: Attribute) {
+    if (attr.scope === "day") {
+      setView({ kind: "day", day: attr.target });
+      return;
     }
+    const r = recordings.find((x) => `${x.deviceId}/${x.id}` === attr.target);
+    if (r) openRecording(r, attr.kind);
   }
 
   // Grouped by device, then by day, newest first (the list arrives sorted).
@@ -126,6 +113,37 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
     }
   }
 
+  if (view.kind === "day") {
+    return (
+      <DayView
+        day={view.day}
+        recordings={recordings}
+        attributes={attributes}
+        playing={playing}
+        onPlay={onPlay}
+        onOpenRecording={(r, k) => openRecording(r, k, view)}
+        onBack={() => setView({ kind: "list" })}
+      />
+    );
+  }
+  if (view.kind === "recording") {
+    const r = recordings.find((x) => `${x.deviceId}/${x.id}` === view.key);
+    if (r) {
+      return (
+        <RecordingView
+          key={view.key}
+          recording={r}
+          attributes={attributes}
+          initialKind={view.attrKind}
+          playing={playing}
+          onPlay={onPlay}
+          onOpenDay={(day) => setView({ kind: "day", day })}
+          onBack={() => setView(view.from ?? { kind: "list" })}
+        />
+      );
+    }
+  }
+
   return (
     <section className="page">
       <header className="page-head">
@@ -143,26 +161,6 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
           {error}
         </div>
       )}
-      {viewing && (
-        <div className="attr-viewer">
-          <div className="attr-viewer-head">
-            <b>{viewing.attr.kind}</b>
-            <span className="muted small">
-              {viewing.attr.scope === "day" ? `day ${viewing.attr.target}` : "recording"} · {viewing.attr.mime} · by{" "}
-              {viewing.attr.author} · {new Date(viewing.attr.updatedMs).toLocaleString()}
-            </span>
-            <span className="spacer" />
-            <button onClick={() => revealItemInDir(viewing.attr.path).catch((e) => setError(errorText(e)))}>
-              Show file
-            </button>
-            <button className="danger" onClick={() => deleteAttribute(viewing.attr)}>
-              Delete
-            </button>
-            <button onClick={() => setViewing(null)}>Close</button>
-          </div>
-          <pre className="attr-content">{viewing.content}</pre>
-        </div>
-      )}
       {recordings.length === 0 && (
         <div className="empty">
           <p>No recordings yet.</p>
@@ -175,7 +173,9 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
           {[...days.entries()].map(([day, items]) => (
             <div key={day} className="day-group">
               <div className="day">
-                {day}
+                <button className="link day-link" onClick={() => setView({ kind: "day", day: isoDay(when(items[0])) })}>
+                  {day} ›
+                </button>
                 <AttributeChips items={attributes.get(attrKey("day", isoDay(when(items[0]))))} onOpen={openAttribute} />
               </div>
               {items.map((r) => {
@@ -203,7 +203,9 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
                           />
                         </form>
                       ) : (
-                        <div className="rec-title">{title(r)}</div>
+                        <button className="rec-title link-title" onClick={() => openRecording(r)}>
+                          {title(r)}
+                        </button>
                       )}
                       <div className="rec-meta">
                         {r.createdMs > 0 ? formatTime(r.createdMs) : "time unknown"} · {formatDuration(r.durationMs)} ·{" "}
@@ -218,6 +220,7 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
                       />
                     </div>
                     <div className="rec-actions">
+                      <button onClick={() => openRecording(r)}>Details</button>
                       <button
                         onClick={() => {
                           setEditing(key);

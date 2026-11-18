@@ -756,3 +756,134 @@ code.block {
   margin: 4px 0;
   user-select: all;
 }
+
+/* --- drill-down: day and recording views ------------------------------------ */
+
+.back {
+  margin-bottom: 6px;
+}
+
+.link-title {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-title:hover,
+.day-link:hover {
+  text-decoration: underline;
+}
+
+.day-link {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0;
+}
+
+.rec-preview {
+  font-size: 12px;
+  margin-top: 3px;
+  color: var(--text, inherit);
+  opacity: 0.85;
+}
+
+.attr-tabs {
+  margin: 8px 0 18px;
+}
+
+.tab-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  padding: 5px 12px;
+}
+
+.tab.current {
+  border-color: var(--line);
+  background: var(--panel-2);
+  color: var(--accent);
+}
+
+.attr-panel {
+  border: 1px solid var(--line);
+  border-top: none;
+  background: var(--panel-2);
+  border-radius: 0 0 8px 8px;
+  padding: 10px 14px 14px;
+}
+
+.attr-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.attr-meta .spacer {
+  flex: 1;
+}
+
+.attr-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  margin: 8px 0 18px;
+}
+
+.md h4 {
+  margin: 12px 0 6px;
+}
+
+.md h5 {
+  margin: 10px 0 4px;
+}
+
+.md p {
+  margin: 4px 0;
+  line-height: 1.5;
+}
+
+.md ul {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+}
+
+.md li {
+  margin: 2px 0;
+  line-height: 1.45;
+}
+
+.md li.check {
+  list-style: none;
+  margin-left: -18px;
+}
+
+.transcript {
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.cue {
+  display: flex;
+  gap: 12px;
+  padding: 3px 0;
+  line-height: 1.45;
+}
+
+.cue-at {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+}
