@@ -1,0 +1,8 @@
+{
+  "identifier": "com.cprec.desktop.sample",
+  "app": {
+    "windows": [
+      { "title": "Cardputer Sync - SAMPLE DATA", "width": 1000, "height": 700, "visible": false, "label": "main" }
+    ]
+  }
+}

@@ -39,6 +39,8 @@ cd src-tauri && cargo run --example sync_cli -- 127.0.0.1:8080 ./cli-library   #
 cd src-tauri && cargo run --example discover_cli -- 10                         # list devices announcing over mDNS
 cd src-tauri && cargo run --example ble_scan_cli -- 8 [--all]                  # debug BLE pairing discovery (device in Pair with Desktop)
 cd src-tauri && cargo run --example mcp_serve_cli -- <wav folder> [port]       # agent MCP server over a folder of WAVs, throwaway DB; prints a token
+cd src-tauri && cargo run --example seed_sample -- <wavs named RECDDMMYYYY_HHMM.WAV> <%APPDATA%\com.cprec.desktop.sample> <library dir>   # demo account + sample transcripts/summaries for a separate app identifier
+npm run tauri dev -- --config src-tauri/sample.tauri.json                       # run the app on that demo data (real database untouched; stop any other dev run first: port 1420)
 ```
 `tauri dev` serves the frontend on port 1420; a stale Vite from an earlier run blocks it ("Port 1420 is already in use").
 
