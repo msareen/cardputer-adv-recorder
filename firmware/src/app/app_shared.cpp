@@ -52,6 +52,8 @@ const char* micModeText(std::uint8_t mode)
     switch (mode) {
         case kMicModeVoice:
             return "Voice";
+        case kMicModeOriginal:
+            return "Original";
         default:
             return "Natural";
     }

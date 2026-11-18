@@ -24,8 +24,9 @@ constexpr std::uint8_t kEs8311MicRegister = 0x14;
 constexpr std::uint8_t kEs8311AnalogMicInput = 0x10;
 constexpr std::uint8_t kMicGainDb = 24;
 // Mic_Class sums two codec samples and multiplies by magnification / 4,
-// so 2 is unity.
+// so 2 is unity and 16 is the old x8.
 constexpr std::uint8_t kMicUnityMagnification = 2;
+constexpr std::uint8_t kMicDigitalGainMagnification = 16;
 
 }  // namespace
 
@@ -46,12 +47,14 @@ void AudioService::end()
     state_ = ServiceState::kStopped;
 }
 
-bool AudioService::startCapture(const AudioFormat& format)
+bool AudioService::startCapture(const AudioFormat& format,
+                                bool digitalGain)
 {
     stop();
     state_ = ServiceState::kStarting;
     error_ = ErrorCode::kNone;
     captureFormat_ = format;
+    digitalGain_ = digitalGain;
 
     // ADV's ES8311 occasionally needs its output clock path initialized
     // before the first ADC start after boot.
@@ -69,7 +72,8 @@ bool AudioService::startCapture(const AudioFormat& format)
     delay(40);
 
     auto micConfig = M5Cardputer.Mic.config();
-    micConfig.magnification = kMicUnityMagnification;
+    micConfig.magnification = digitalGain ? kMicDigitalGainMagnification
+                                          : kMicUnityMagnification;
     micConfig.noise_filter_level = 0;
     M5Cardputer.Mic.config(micConfig);
 
@@ -80,10 +84,13 @@ bool AudioService::startCapture(const AudioFormat& format)
     }
     // Mic.begin() just reprogrammed the codec; set the gain before the
     // settle delay so its step is over when the first buffer is queued.
-    M5Cardputer.In_I2C.writeRegister8(
-        kEs8311Address, kEs8311MicRegister,
-        static_cast<std::uint8_t>(kEs8311AnalogMicInput | (kMicGainDb / 3)),
-        100000);
+    if (!digitalGain) {
+        M5Cardputer.In_I2C.writeRegister8(
+            kEs8311Address, kEs8311MicRegister,
+            static_cast<std::uint8_t>(kEs8311AnalogMicInput |
+                                      (kMicGainDb / 3)),
+            100000);
+    }
     delay(80);
     setCodecOutputMuted(true);
     mode_ = AudioMode::kCapture;
@@ -95,7 +102,7 @@ bool AudioService::restartCapture()
 {
     const AudioFormat format = captureFormat_;
     stopCapture();
-    return startCapture(format);
+    return startCapture(format, digitalGain_);
 }
 
 bool AudioService::record(std::int16_t* destination, std::size_t sampleCount)

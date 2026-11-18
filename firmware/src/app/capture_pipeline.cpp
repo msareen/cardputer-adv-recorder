@@ -134,6 +134,8 @@ void RecorderApp::processCaptureBuffer(std::uint8_t bufferIndex)
     std::int16_t* samples = audioBuffers_[bufferIndex];
     if (voiceEnabled_) {
         voice_.process(samples, kAudioSamplesPerBuffer);
+    } else if (originalCapture_) {
+        amplifyOriginalCapture(samples, kAudioSamplesPerBuffer);
     }
 
     std::int64_t total = 0;
@@ -218,6 +220,28 @@ void RecorderApp::captureWriterTask()
 
     captureWriterStopped_.store(true, std::memory_order_release);
     vTaskDelete(nullptr);
+}
+void RecorderApp::amplifyOriginalCapture(std::int16_t* samples,
+                                         std::size_t count) const
+{
+    // Unchanged from firmware 1.4.0 (Original mic mode): with the PGA at
+    // 0 dB, add 6 dB and softly compress peaks.
+    constexpr std::int32_t kGain = 2;
+    constexpr std::int32_t kCompressionStart = 24500;
+    for (std::size_t index = 0; index < count; ++index) {
+        std::int32_t value =
+            static_cast<std::int32_t>(samples[index]) * kGain;
+        const bool negative = value < 0;
+        std::int32_t magnitude = negative ? -value : value;
+        if (magnitude > kCompressionStart) {
+            magnitude =
+                kCompressionStart +
+                (magnitude - kCompressionStart) / 4;
+        }
+        magnitude = min(magnitude, 32767);
+        samples[index] = static_cast<std::int16_t>(
+            negative ? -magnitude : magnitude);
+    }
 }
 void RecorderApp::amplifyPlayback(std::int16_t* samples,
                                   std::size_t count) const

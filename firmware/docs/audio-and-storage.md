@@ -26,6 +26,7 @@ Mic Mode then chooses what happens to the samples (`kVoicePreset` in
 |---|---|
 | Voice (default) | 100 Hz high-pass, +3 dB above 3 kHz, up to 9 dB of speech levelling, pauses 8 dB down |
 | Natural | none; the microphone as captured |
+| Original | the 1.4.0 capture, for comparison: PGA at 0 dB, samples multiplied by 16, peaks above -2.5 dBFS compressed 4:1 |
 
 On the device, a 12 dB levelling ceiling sounded a little loud, and a Room
 preset for distant voices (30 dB PGA, up to 18 dB of levelling, no expander)

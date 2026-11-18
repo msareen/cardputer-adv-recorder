@@ -53,12 +53,13 @@ bool RecorderApp::startRecording()
         return false;
     }
     voiceEnabled_ = settings_.micMode == kMicModeVoice;
+    originalCapture_ = settings_.micMode == kMicModeOriginal;
     if (voiceEnabled_) {
         voice_.reset(kRecordingSpec.sampleRate, kVoicePreset);
     }
     Serial.printf("[RECORDER] Mic mode %s\n",
                   micModeText(settings_.micMode));
-    if (!audio_.startCapture(kAudioFormat)) {
+    if (!audio_.startCapture(kAudioFormat, originalCapture_)) {
         writer_.abort();
         storage_.remove(currentPath_.c_str());
         currentPath_ = "";

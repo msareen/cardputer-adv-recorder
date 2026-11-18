@@ -102,6 +102,13 @@ void RecorderApp::draw()
         const std::uint32_t recordingBytes =
             recordingBytes_.load(std::memory_order_relaxed);
         display.fillCircle(16, 39, 5, TFT_RED);
+        // Mic mode, small, beside the dot (it cannot change mid-recording).
+        String micMode = micModeText(settings_.micMode);
+        micMode.toUpperCase();
+        display.setTextFont(1);
+        display.setTextColor(muted, background);
+        display.setCursor(26, 36);
+        display.print(micMode);
         display.setTextFont(4);
         display.setTextDatum(middle_center);
         display.setTextColor(TFT_WHITE, background);

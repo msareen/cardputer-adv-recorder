@@ -34,7 +34,11 @@ public:
     void update();
     void end();
 
-    bool startCapture(const AudioFormat& format = {});
+    // `digitalGain`: the capture of firmware 1.4.0 and earlier (PGA at
+    // M5Unified's 0 dB, level made up by multiplying samples), kept as the
+    // Original mic mode. Otherwise the gain comes from the analog PGA.
+    bool startCapture(const AudioFormat& format = {},
+                      bool digitalGain = false);
     bool restartCapture();
     bool record(std::int16_t* destination, std::size_t sampleCount);
     bool isRecording() const;
@@ -60,6 +64,7 @@ private:
     void setCodecOutputMuted(bool muted);
 
     AudioFormat captureFormat_;
+    bool digitalGain_ = false;
     AudioMode mode_ = AudioMode::kIdle;
     ServiceState state_ = ServiceState::kStopped;
     ErrorCode error_ = ErrorCode::kNone;

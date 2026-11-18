@@ -147,6 +147,8 @@ private:
     static void captureWriterTaskEntry(void* context);
     void captureWriterTask();
     void amplifyPlayback(std::int16_t* samples, std::size_t count) const;
+    void amplifyOriginalCapture(std::int16_t* samples,
+                                std::size_t count) const;
     void adjustVolume(int offset);
     void updateBattery(bool force = false);
     bool shouldAutoSaveForLowBattery() const;
@@ -267,6 +269,8 @@ private:
     // task starts and not changed while it runs.
     VoiceProcessor voice_;
     bool voiceEnabled_ = false;
+    // Original mic mode: the 1.4.0 digital gain and peak compression.
+    bool originalCapture_ = false;
     std::uint8_t playbackBufferIndex_ = 0;
     std::uint8_t playbackVolume_ = 255;
     std::uint8_t playbackSpeedIndex_ = 1;
