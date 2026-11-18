@@ -241,7 +241,7 @@ void RecorderApp::loadSettings()
     settings_.seekStepSeconds =
         preferences_.getUChar("seek_step", settings_.seekStepSeconds);
     settings_.micMode =
-        preferences_.getUChar("mic_mode", settings_.micMode);
+        preferences_.getUChar("mic", settings_.micMode);
     settings_.vadEnabled =
         preferences_.getBool("vad", settings_.vadEnabled);
     settings_.triplePressWake =
@@ -277,7 +277,7 @@ void RecorderApp::loadSettings()
         settings_.seekStepSeconds = 5;
     }
     if (settings_.micMode >= kMicModeCount) {
-        settings_.micMode = kMicModeNatural;
+        settings_.micMode = kMicModeVoice;
     }
 }
 void RecorderApp::saveSettings()
@@ -288,7 +288,7 @@ void RecorderApp::saveSettings()
     preferences_.putUChar("play_scr", settings_.playbackScreenMode);
     preferences_.putUChar("low_save", settings_.lowBatterySavePercent);
     preferences_.putUChar("seek_step", settings_.seekStepSeconds);
-    preferences_.putUChar("mic_mode", settings_.micMode);
+    preferences_.putUChar("mic", settings_.micMode);
     preferences_.putBool("vad", settings_.vadEnabled);
     preferences_.putBool("triple_wake", settings_.triplePressWake);
     preferences_.putBool("del_sync", settings_.deleteAfterSync);

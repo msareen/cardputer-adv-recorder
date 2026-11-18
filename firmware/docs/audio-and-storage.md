@@ -18,20 +18,25 @@ The level comes from the ES8311 analog PGA (register 0x14), set by
 make up 24 dB by multiplying the 16-bit samples, so recordings moved in steps
 of 16 and the hiss floor was quantization noise.
 
-Settings > Mic Mode picks a preset (`kMicPresets` in `app/recording_flow.cpp`):
+The PGA is 24 dB, matching the old loudness and clipping point. Settings >
+Mic Mode then chooses what happens to the samples (`kVoicePreset` in
+`app/recording_flow.cpp`):
 
-| Mode | PGA | Processing |
-|---|---|---|
-| Natural (default) | 24 dB | none; same loudness as the old firmware |
-| Voice | 24 dB | 100 Hz high-pass, +3 dB above 3 kHz, up to 12 dB of speech levelling, pauses 8 dB down |
-| Room | 30 dB | 80 Hz high-pass, up to 18 dB of speech levelling, pauses untouched |
+| Mode | Processing |
+|---|---|
+| Voice (default) | 100 Hz high-pass, +3 dB above 3 kHz, up to 9 dB of speech levelling, pauses 8 dB down |
+| Natural | none; the microphone as captured |
+
+On the device, a 12 dB levelling ceiling sounded a little loud, and a Room
+preset for distant voices (30 dB PGA, up to 18 dB of levelling, no expander)
+mostly raised hiss, so it was dropped.
 
 `VoiceProcessor` (`media/voice_processor`, host-tested in `test_voice`) runs
 on the writer task. Its gain moves only on speech and slowly (0.5 s to fall),
 since faster gain changes were heard as crackle on the device. The first
 200 ms are faded in and not measured. The serial log (debug build) prints the
-mode and PGA at capture start, and the final gain, noise floor, clipped and
-limited sample counts when a processed recording ends.
+mode at capture start, and the final gain, noise floor, clipped and limited
+sample counts when a Voice recording ends.
 
 The file stays 16 kHz mono 16-bit. `Mic_Class` over-samples by 2 and its
 clocking of the ES8311 has not been measured, so the rate was left alone.

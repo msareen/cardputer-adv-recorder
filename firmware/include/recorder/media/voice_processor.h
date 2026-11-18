@@ -6,7 +6,7 @@
 namespace cardputer_recorder {
 
 // Optional clean-up of captured PCM before it is written to the WAV, used
-// by the Voice and Room mic modes (Natural writes the samples untouched).
+// by the Voice mic mode (Natural writes the samples untouched).
 // Pure arithmetic (no Arduino), so it is host-tested.
 //
 // Chain, per sample: high-pass (rumble, handling thumps) -> high shelf

@@ -5,28 +5,12 @@
 namespace cardputer_recorder {
 namespace {
 
-// Settings > Mic Mode. Natural is the plain microphone at the old
-// loudness. Voice is for someone speaking to the device (notes,
-// interviews): rumble cut, a little presence, speech levelled by up to
-// 12 dB and pauses turned down 8 dB. Room is for voices further away
-// (meetings, lectures): 6 dB more analog gain, rumble cut, up to 18 dB of
-// levelling, pauses left alone so quiet talkers are not cut.
-struct MicPreset {
-    std::uint8_t micGainDb;
-    bool process;
-    VoiceProcessor::Config voice;
-};
-
-const MicPreset kMicPresets[kMicModeCount] = {
-    {24, false, {0.0F, 0.0F, 0.0F, 0.0F}},      // Natural
-    {24, true, {100.0F, 3.0F, 12.0F, 8.0F}},    // Voice
-    {30, true, {80.0F, 0.0F, 18.0F, 0.0F}},     // Room
-};
-
-const MicPreset& micPreset(std::uint8_t mode)
-{
-    return kMicPresets[mode < kMicModeCount ? mode : kMicModeNatural];
-}
+// Settings > Mic Mode > Voice (the default): rumble cut below 100 Hz,
+// +3 dB above 3 kHz, speech levelled by up to 9 dB, pauses turned down
+// 8 dB. Natural writes the microphone untouched. Tried on the device: a
+// 12 dB ceiling was a little loud, and a Room preset (30 dB PGA, up to
+// 18 dB of levelling for distant voices) mostly raised hiss.
+const VoiceProcessor::Config kVoicePreset = {100.0F, 3.0F, 9.0F, 8.0F};
 
 }  // namespace
 
@@ -68,14 +52,13 @@ bool RecorderApp::startRecording()
         setError("E4: WAV file failed.");
         return false;
     }
-    const MicPreset& preset = micPreset(settings_.micMode);
-    voiceEnabled_ = preset.process;
+    voiceEnabled_ = settings_.micMode == kMicModeVoice;
     if (voiceEnabled_) {
-        voice_.reset(kRecordingSpec.sampleRate, preset.voice);
+        voice_.reset(kRecordingSpec.sampleRate, kVoicePreset);
     }
     Serial.printf("[RECORDER] Mic mode %s\n",
                   micModeText(settings_.micMode));
-    if (!audio_.startCapture(kAudioFormat, preset.micGainDb)) {
+    if (!audio_.startCapture(kAudioFormat)) {
         writer_.abort();
         storage_.remove(currentPath_.c_str());
         currentPath_ = "";

@@ -74,7 +74,7 @@ private:
         std::uint8_t playbackScreenMode = 1;
         std::uint8_t lowBatterySavePercent = 10;
         std::uint8_t seekStepSeconds = 5;
-        std::uint8_t micMode = 0;  // kMicModeNatural
+        std::uint8_t micMode = 1;  // kMicModeVoice
         bool vadEnabled = false;
         bool triplePressWake = false;
         bool deleteAfterSync = false;
@@ -263,7 +263,7 @@ private:
     std::atomic<std::uint8_t> recordingLevel_{0};
     std::atomic<std::uint32_t> recordingBytes_{0};
     float recordingNoiseFloor_ = 0.0F;
-    // Voice and Room mic modes; runs on the writer task. Set before the
+    // Voice mic mode; runs on the writer task. Set before the
     // task starts and not changed while it runs.
     VoiceProcessor voice_;
     bool voiceEnabled_ = false;

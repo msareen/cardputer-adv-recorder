@@ -13,9 +13,10 @@ namespace {
 constexpr std::uint32_t kRate = 16000;
 constexpr double kPi = 3.14159265358979;
 
-// The firmware's Voice and Room presets (app/recording_flow.cpp).
-const VoiceProcessor::Config kVoice = {100.0F, 3.0F, 12.0F, 8.0F};
-const VoiceProcessor::Config kRoom = {80.0F, 0.0F, 18.0F, 0.0F};
+// The firmware's Voice preset (app/recording_flow.cpp), and one without
+// the expander.
+const VoiceProcessor::Config kVoice = {100.0F, 3.0F, 9.0F, 8.0F};
+const VoiceProcessor::Config kNoExpander = {80.0F, 0.0F, 9.0F, 0.0F};
 const VoiceProcessor::Config kAllOff = {0.0F, 0.0F, 0.0F, 0.0F};
 
 // Deterministic noise, uniform in [-amplitude, amplitude].
@@ -106,8 +107,8 @@ void append(std::vector<std::int16_t>& to,
 
 void test_moderate_speech_is_brought_to_target()
 {
-    // Bursts at about -31 dBFS RMS: within the Voice preset's 12 dB reach.
-    std::vector<std::int16_t> samples = speech(1000.0, 1300.0, 8.0, 6.0);
+    // Bursts at about -28 dBFS RMS: within the Voice preset's 9 dB reach.
+    std::vector<std::int16_t> samples = speech(1000.0, 1800.0, 8.0, 6.0);
     VoiceProcessor processor;
     processor.reset(kRate, kVoice);
     run(processor, samples);
@@ -120,20 +121,20 @@ void test_moderate_speech_is_brought_to_target()
 
 void test_gain_stops_at_the_preset_ceiling()
 {
-    // Very quiet speech (about -46 dBFS): wants 26 dB, Voice allows 12.
+    // Very quiet speech (about -46 dBFS): wants 26 dB, Voice allows 9.
     std::vector<std::int16_t> samples = speech(1000.0, 230.0, 8.0, 2.0);
     VoiceProcessor processor;
     processor.reset(kRate, kVoice);
     run(processor, samples);
     const float gainDb = processor.stats().gainDb;
-    TEST_ASSERT_FLOAT_WITHIN(0.5F, 12.0F, gainDb);
+    TEST_ASSERT_FLOAT_WITHIN(0.5F, 9.0F, gainDb);
 }
 
 void test_loud_input_never_exceeds_limiter()
 {
     std::vector<std::int16_t> samples = tone(700.0, 30000.0, 3.0);
     VoiceProcessor processor;
-    processor.reset(kRate, kRoom);
+    processor.reset(kRate, kVoice);
     run(processor, samples);
     TEST_ASSERT_TRUE(peak(samples) <= 28001);
 }
@@ -173,14 +174,14 @@ void test_voice_preset_turns_pauses_down()
     TEST_ASSERT_TRUE(afterGain > speechGain * 0.8);
 }
 
-void test_room_preset_leaves_pauses_alone()
+void test_without_expander_pauses_are_left_alone()
 {
     std::vector<std::int16_t> samples = speech(800.0, 1500.0, 3.08, 12.0);
     append(samples, tone(800.0, 0.0, 2.0, 12.0));
     const std::vector<std::int16_t> original = samples;
 
     VoiceProcessor processor;
-    processor.reset(kRate, kRoom);
+    processor.reset(kRate, kNoExpander);
     run(processor, samples);
 
     const double speechGain = rms(samples, 2.0, 3.0) / rms(original, 2.0, 3.0);
@@ -195,7 +196,7 @@ void test_start_click_does_not_duck_the_recording()
     // Full-scale burst in the first 100 ms (codec settling, the Enter key),
     // then moderate speech.
     std::vector<std::int16_t> samples = tone(300.0, 32767.0, 0.1);
-    append(samples, speech(1000.0, 1300.0, 6.0, 6.0));
+    append(samples, speech(1000.0, 1800.0, 6.0, 6.0));
     VoiceProcessor processor;
     processor.reset(kRate, kVoice);
     run(processor, samples);
@@ -210,7 +211,7 @@ void test_clipped_input_is_counted()
         sample = sample >= 0 ? 32767 : -32767;
     }
     VoiceProcessor processor;
-    processor.reset(kRate, kRoom);
+    processor.reset(kRate, kVoice);
     run(processor, samples);
     TEST_ASSERT_TRUE(processor.stats().clippedInputSamples > 1000);
 }
@@ -249,7 +250,7 @@ int main(int, char**)
     RUN_TEST(test_loud_input_never_exceeds_limiter);
     RUN_TEST(test_rumble_is_removed);
     RUN_TEST(test_voice_preset_turns_pauses_down);
-    RUN_TEST(test_room_preset_leaves_pauses_alone);
+    RUN_TEST(test_without_expander_pauses_are_left_alone);
     RUN_TEST(test_start_click_does_not_duck_the_recording);
     RUN_TEST(test_clipped_input_is_counted);
     RUN_TEST(test_all_stages_off_passes_samples_through);

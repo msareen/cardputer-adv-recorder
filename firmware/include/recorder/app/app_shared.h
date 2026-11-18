@@ -25,8 +25,7 @@ constexpr std::uint8_t kSettingVersion = 7;
 // Settings > Mic Mode values (RecorderApp::Settings::micMode).
 constexpr std::uint8_t kMicModeNatural = 0;
 constexpr std::uint8_t kMicModeVoice = 1;
-constexpr std::uint8_t kMicModeRoom = 2;
-constexpr std::uint8_t kMicModeCount = 3;
+constexpr std::uint8_t kMicModeCount = 2;
 constexpr std::uint8_t kScreenSaverSettingsCount = 4;
 // Settings > Sync rows.
 constexpr std::uint8_t kSyncSettingsCount = 7;
