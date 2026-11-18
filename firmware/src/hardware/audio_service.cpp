@@ -14,6 +14,19 @@ constexpr std::uint8_t kDacMuteBits = 0x60;
 constexpr std::uint8_t kEs8311HeadphoneEnabled = 0x10;
 constexpr std::uint8_t kEs8311DacUnityGain = 0xBF;
 
+// Register 0x14: bit 4 selects the analog microphone input, bits 3..0 are
+// the PGA gain in 3 dB steps. M5Unified leaves the PGA at 0 dB, and the
+// recorder used to make up the level by multiplying the 16-bit samples by
+// 16, so recordings moved in steps of 16 and the hiss floor was
+// quantization noise. The same 24 dB now comes from the PGA instead:
+// the loudness and the clipping point of a recording are unchanged.
+constexpr std::uint8_t kEs8311MicRegister = 0x14;
+constexpr std::uint8_t kEs8311AnalogMicInput = 0x10;
+constexpr std::uint8_t kMicGainDb = 24;
+// Mic_Class sums two codec samples and multiplies by magnification / 4,
+// so 2 is unity.
+constexpr std::uint8_t kMicUnityMagnification = 2;
+
 }  // namespace
 
 bool AudioService::begin()
@@ -56,7 +69,7 @@ bool AudioService::startCapture(const AudioFormat& format)
     delay(40);
 
     auto micConfig = M5Cardputer.Mic.config();
-    micConfig.magnification = 16;
+    micConfig.magnification = kMicUnityMagnification;
     micConfig.noise_filter_level = 0;
     M5Cardputer.Mic.config(micConfig);
 
@@ -65,6 +78,12 @@ bool AudioService::startCapture(const AudioFormat& format)
         error_ = ErrorCode::kInitializationFailed;
         return false;
     }
+    // Mic.begin() just reprogrammed the codec; set the gain before the
+    // settle delay so its step is over when the first buffer is queued.
+    M5Cardputer.In_I2C.writeRegister8(
+        kEs8311Address, kEs8311MicRegister,
+        static_cast<std::uint8_t>(kEs8311AnalogMicInput | (kMicGainDb / 3)),
+        100000);
     delay(80);
     setCodecOutputMuted(true);
     mode_ = AudioMode::kCapture;

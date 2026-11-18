@@ -144,7 +144,6 @@ private:
     void processCaptureBuffer(std::uint8_t bufferIndex);
     static void captureWriterTaskEntry(void* context);
     void captureWriterTask();
-    void amplifyCapture(std::int16_t* samples, std::size_t count) const;
     void amplifyPlayback(std::int16_t* samples, std::size_t count) const;
     void adjustVolume(int offset);
     void updateBattery(bool force = false);

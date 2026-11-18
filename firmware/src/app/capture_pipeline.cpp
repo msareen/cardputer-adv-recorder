@@ -132,7 +132,6 @@ bool RecorderApp::serviceCompletedCapture(bool refill)
 void RecorderApp::processCaptureBuffer(std::uint8_t bufferIndex)
 {
     std::int16_t* samples = audioBuffers_[bufferIndex];
-    amplifyCapture(samples, kAudioSamplesPerBuffer);
 
     std::int64_t total = 0;
     for (std::size_t index = 0;
@@ -216,29 +215,6 @@ void RecorderApp::captureWriterTask()
 
     captureWriterStopped_.store(true, std::memory_order_release);
     vTaskDelete(nullptr);
-}
-void RecorderApp::amplifyCapture(std::int16_t* samples,
-                                 std::size_t count) const
-{
-    // ADV microphone PCM is conservative even at M5Unified's default input
-    // gain. Add 6 dB before writing the WAV and softly compress peaks so the
-    // saved file is useful on computers without post-processing.
-    constexpr std::int32_t kGain = 2;
-    constexpr std::int32_t kCompressionStart = 24500;
-    for (std::size_t index = 0; index < count; ++index) {
-        std::int32_t value =
-            static_cast<std::int32_t>(samples[index]) * kGain;
-        const bool negative = value < 0;
-        std::int32_t magnitude = negative ? -value : value;
-        if (magnitude > kCompressionStart) {
-            magnitude =
-                kCompressionStart +
-                (magnitude - kCompressionStart) / 4;
-        }
-        magnitude = min(magnitude, 32767);
-        samples[index] = static_cast<std::int16_t>(
-            negative ? -magnitude : magnitude);
-    }
 }
 void RecorderApp::amplifyPlayback(std::int16_t* samples,
                                   std::size_t count) const
