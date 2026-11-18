@@ -17,6 +17,7 @@
 #include "recorder/hardware/wifi_service.h"
 #include "recorder/input.h"
 #include "recorder/media/recording_chunk.h"
+#include "recorder/media/voice_processor.h"
 #include "recorder/media/wav_file.h"
 #include "recorder/sync/cbor.h"
 #include "recorder/sync/device_identity.h"
@@ -73,6 +74,7 @@ private:
         std::uint8_t playbackScreenMode = 1;
         std::uint8_t lowBatterySavePercent = 10;
         std::uint8_t seekStepSeconds = 5;
+        std::uint8_t micMode = 0;  // kMicModeNatural
         bool vadEnabled = false;
         bool triplePressWake = false;
         bool deleteAfterSync = false;
@@ -261,6 +263,10 @@ private:
     std::atomic<std::uint8_t> recordingLevel_{0};
     std::atomic<std::uint32_t> recordingBytes_{0};
     float recordingNoiseFloor_ = 0.0F;
+    // Voice and Room mic modes; runs on the writer task. Set before the
+    // task starts and not changed while it runs.
+    VoiceProcessor voice_;
+    bool voiceEnabled_ = false;
     std::uint8_t playbackBufferIndex_ = 0;
     std::uint8_t playbackVolume_ = 255;
     std::uint8_t playbackSpeedIndex_ = 1;

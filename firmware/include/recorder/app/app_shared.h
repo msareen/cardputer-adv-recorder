@@ -17,10 +17,16 @@ constexpr unsigned long kCaptureStartTimeoutMs = 1000;
 constexpr unsigned long kCaptureDrainTimeoutMs = 1000;
 constexpr unsigned long kSaveSettleMs = 750;
 constexpr unsigned long kRecordingStopGuardMs = 500;
-constexpr std::uint8_t kSettingsCount = 7;
-constexpr std::uint8_t kSettingSync = 4;
-constexpr std::uint8_t kSettingReset = 5;
-constexpr std::uint8_t kSettingVersion = 6;
+constexpr std::uint8_t kSettingsCount = 8;
+constexpr std::uint8_t kSettingMicMode = 4;
+constexpr std::uint8_t kSettingSync = 5;
+constexpr std::uint8_t kSettingReset = 6;
+constexpr std::uint8_t kSettingVersion = 7;
+// Settings > Mic Mode values (RecorderApp::Settings::micMode).
+constexpr std::uint8_t kMicModeNatural = 0;
+constexpr std::uint8_t kMicModeVoice = 1;
+constexpr std::uint8_t kMicModeRoom = 2;
+constexpr std::uint8_t kMicModeCount = 3;
 constexpr std::uint8_t kScreenSaverSettingsCount = 4;
 // Settings > Sync rows.
 constexpr std::uint8_t kSyncSettingsCount = 7;
@@ -44,5 +50,6 @@ const char* screenModeText(std::uint8_t mode);
 const char* playbackSpeedText(std::uint8_t index);
 const char* lowBatterySaveText(std::uint8_t percent);
 const char* seekStepText(std::uint8_t seconds);
+const char* micModeText(std::uint8_t mode);
 
 }  // namespace cardputer_recorder

@@ -132,6 +132,9 @@ bool RecorderApp::serviceCompletedCapture(bool refill)
 void RecorderApp::processCaptureBuffer(std::uint8_t bufferIndex)
 {
     std::int16_t* samples = audioBuffers_[bufferIndex];
+    if (voiceEnabled_) {
+        voice_.process(samples, kAudioSamplesPerBuffer);
+    }
 
     std::int64_t total = 0;
     for (std::size_t index = 0;

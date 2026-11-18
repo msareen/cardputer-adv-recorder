@@ -207,7 +207,8 @@ void RecorderApp::draw()
             settingsPage_ == SettingsPage::kScreenSaver;
         const char* mainLabels[kSettingsCount] = {
             "Brightness", "Screen Saver", "Low Battery Save",
-            "Seek Step", "Sync", "Reset to Default", "Version"};
+            "Seek Step", "Mic Mode", "Sync", "Reset to Default",
+            "Version"};
         const char* syncLabels[kSyncSettingsCount] = {
             "Pair with Desktop", "Sync over Bluetooth", "Paired With", "WiFi",
             "Delete After Sync", "Auto-Sync Charging", "Forget Pairing"};

@@ -47,6 +47,18 @@ const char* screenModeText(std::uint8_t mode)
     }
 }
 
+const char* micModeText(std::uint8_t mode)
+{
+    switch (mode) {
+        case kMicModeVoice:
+            return "Voice";
+        case kMicModeRoom:
+            return "Room";
+        default:
+            return "Natural";
+    }
+}
+
 const char* playbackSpeedText(std::uint8_t index)
 {
     switch (index) {

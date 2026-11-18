@@ -34,7 +34,10 @@ public:
     void update();
     void end();
 
-    bool startCapture(const AudioFormat& format = {});
+    // `micGainDb`: analog microphone gain (ES8311 PGA), 0 to 30 in 3 dB
+    // steps.
+    bool startCapture(const AudioFormat& format = {},
+                      std::uint8_t micGainDb = 24);
     bool restartCapture();
     bool record(std::int16_t* destination, std::size_t sampleCount);
     bool isRecording() const;
@@ -60,6 +63,7 @@ private:
     void setCodecOutputMuted(bool muted);
 
     AudioFormat captureFormat_;
+    std::uint8_t micGainDb_ = 24;
     AudioMode mode_ = AudioMode::kIdle;
     ServiceState state_ = ServiceState::kStopped;
     ErrorCode error_ = ErrorCode::kNone;

@@ -192,6 +192,12 @@ void RecorderApp::cycleSelectedSetting(int offset)
             settings_.seekStepSeconds = values[index];
             break;
         }
+        case kSettingMicMode:
+            settings_.micMode = static_cast<std::uint8_t>(
+                (static_cast<int>(settings_.micMode) + kMicModeCount +
+                 offset) %
+                kMicModeCount);
+            break;
         case kSettingSync:
             break;
         case kSettingReset:
@@ -234,6 +240,8 @@ void RecorderApp::loadSettings()
         preferences_.getUChar("low_save", settings_.lowBatterySavePercent);
     settings_.seekStepSeconds =
         preferences_.getUChar("seek_step", settings_.seekStepSeconds);
+    settings_.micMode =
+        preferences_.getUChar("mic_mode", settings_.micMode);
     settings_.vadEnabled =
         preferences_.getBool("vad", settings_.vadEnabled);
     settings_.triplePressWake =
@@ -268,6 +276,9 @@ void RecorderApp::loadSettings()
         settings_.seekStepSeconds != 60) {
         settings_.seekStepSeconds = 5;
     }
+    if (settings_.micMode >= kMicModeCount) {
+        settings_.micMode = kMicModeNatural;
+    }
 }
 void RecorderApp::saveSettings()
 {
@@ -277,6 +288,7 @@ void RecorderApp::saveSettings()
     preferences_.putUChar("play_scr", settings_.playbackScreenMode);
     preferences_.putUChar("low_save", settings_.lowBatterySavePercent);
     preferences_.putUChar("seek_step", settings_.seekStepSeconds);
+    preferences_.putUChar("mic_mode", settings_.micMode);
     preferences_.putBool("vad", settings_.vadEnabled);
     preferences_.putBool("triple_wake", settings_.triplePressWake);
     preferences_.putBool("del_sync", settings_.deleteAfterSync);
@@ -338,6 +350,8 @@ String RecorderApp::settingValueText(std::uint8_t index) const
             return lowBatterySaveText(settings_.lowBatterySavePercent);
         case 3:
             return seekStepText(settings_.seekStepSeconds);
+        case kSettingMicMode:
+            return micModeText(settings_.micMode);
         case kSettingSync:
             return ">";
         case kSettingReset:
