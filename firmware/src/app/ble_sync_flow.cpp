@@ -136,7 +136,9 @@ void RecorderApp::startBleSync()
     syncPhase_ = SyncPhase::kBluetooth;
     syncPhaseStartedMs_ = millis();
     syncLastRequestMs_ = millis();
-    message_ = "On the desktop: Sync over Bluetooth.";
+    // Bluetooth-only devices use Sync now; others the fallback button.
+    message_ = peer_.wifiSsid.empty() ? "On the desktop: Sync now."
+                                      : "On the desktop: Sync over Bluetooth.";
     Serial.printf("[SYNC] BLE fallback advertising. free heap=%u\n",
                   static_cast<unsigned>(ESP.getFreeHeap()));
     forceRedraw_ = true;

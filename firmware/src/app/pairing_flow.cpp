@@ -32,7 +32,7 @@ void RecorderApp::openPairing()
     pairPhase_ = PairPhase::kScanning;
     pairResult_ = "";
     resetPairSession();
-    message_ = "Scanning WiFi...";
+    message_ = "Looking for WiFi networks...";
     forceRedraw_ = true;
     draw();
 
@@ -124,18 +124,53 @@ void RecorderApp::startPairWifi(const std::string& ssid,
                                 const std::string& password)
 {
     pairJoinSsid_ = ssid;
+    if (ssid.empty()) {
+        // Bluetooth only: nothing to join, so answer straight away.
+        Serial.printf("[PAIR] Bluetooth only. t=%lu\n", millis());
+        finishPairWifi(false);
+        return;
+    }
     pairPhase_ = PairPhase::kJoining;
     pairJoinStartedMs_ = millis();
-    message_ = ssid.empty() ? String("Bluetooth only.")
-                            : String("Joining ") + ssid.c_str() + "...";
+    message_ = String("Joining ") + ssid.c_str() + "...";
     forceRedraw_ = true;
-    Serial.printf("[PAIR] Testing WiFi. free heap=%u largest=%u\n",
-                  static_cast<unsigned>(ESP.getFreeHeap()),
+    Serial.printf("[PAIR] Testing WiFi. t=%lu free heap=%u largest=%u\n",
+                  millis(), static_cast<unsigned>(ESP.getFreeHeap()),
                   static_cast<unsigned>(ESP.getMaxAllocHeap()));
-    if (ssid.empty() || !wifi_.begin(ssid.c_str(), password.c_str())) {
+    if (!wifi_.begin(ssid.c_str(), password.c_str())) {
         // Reported as a failed join on the next service pass.
         pairJoinStartedMs_ = millis() - kPairWifiTimeoutMs - 1;
     }
+}
+
+void RecorderApp::finishPairWifi(bool joined)
+{
+    const String ip = joined ? wifi_.ipAddress() : String();
+    CborWriter result;
+    result.map(3)
+        .text("t")
+        .text("wifi")
+        .text("ok")
+        .boolean(joined)
+        .text("ip")
+        .text(ip.c_str());
+    const unsigned long sendStartMs = millis();
+    sendSecure(result);
+    // WiFi goes off in closePairing, after Bluetooth.
+    pairPhase_ = PairPhase::kDone;
+    Serial.printf("[PAIR] WiFi result %s. t=%lu send=%lu ms\n",
+                  pairJoinSsid_.empty() ? "bluetooth-only"
+                  : joined              ? "ok"
+                                        : "failed",
+                  sendStartMs, millis() - sendStartMs);
+    pairResult_ = pairJoinSsid_.empty()
+                      ? String("Bluetooth only: press S to sync.")
+                  : joined ? String("WiFi OK: ") + pairJoinSsid_.c_str()
+                           : String("WiFi failed: ") + pairJoinSsid_.c_str();
+    message_ = peer_.hostName.empty()
+                   ? String("Paired.")
+                   : String("Paired with ") + peer_.hostName.c_str() + ".";
+    forceRedraw_ = true;
 }
 
 void RecorderApp::handleControlMessage(const std::string& frame)
@@ -239,7 +274,7 @@ void RecorderApp::handleControlMessage(const std::string& frame)
                     message_ = "Desktop connected.";
                 } else {
                     sendNetworks();
-                    message_ = "Connected. Waiting for WiFi.";
+                    message_ = "Connected. Finish on the desktop.";
                 }
             } else {
                 pairCode_ = pairingCode(pairHostKey_, identity_.publicKey(),
@@ -352,29 +387,7 @@ void RecorderApp::servicePairing()
         const bool joined = wifi_.connected();
         if (joined ||
             millis() - pairJoinStartedMs_ > kPairWifiTimeoutMs) {
-            const String ip = joined ? wifi_.ipAddress() : String();
-            CborWriter result;
-            result.map(3)
-                .text("t")
-                .text("wifi")
-                .text("ok")
-                .boolean(joined)
-                .text("ip")
-                .text(ip.c_str());
-            sendSecure(result);
-            // WiFi goes off in closePairing, after Bluetooth.
-            pairPhase_ = PairPhase::kDone;
-            Serial.printf("[PAIR] WiFi test %s\n", joined ? "ok" : "failed");
-            pairResult_ =
-                pairJoinSsid_.empty()
-                    ? String("Bluetooth only: press S to sync.")
-                : joined ? String("WiFi OK: ") + pairJoinSsid_.c_str()
-                         : String("WiFi failed: ") + pairJoinSsid_.c_str();
-            message_ = peer_.hostName.empty()
-                           ? String("Paired.")
-                           : String("Paired with ") +
-                                 peer_.hostName.c_str() + ".";
-            forceRedraw_ = true;
+            finishPairWifi(joined);
         }
         return;
     }
@@ -460,13 +473,13 @@ void RecorderApp::drawPairingScreen()
         display.setCursor(8, 30);
         switch (pairPhase_) {
             case PairPhase::kScanning:
-                display.print("Scanning WiFi");
+                display.print("Getting ready");
                 break;
             case PairPhase::kAdvertising:
-                display.print("Pair with desktop");
+                display.print("Ready to pair");
                 break;
             case PairPhase::kJoining:
-                display.print("Testing WiFi");
+                display.print(pairJoinSsid_.empty() ? "Saving" : "Testing WiFi");
                 break;
             case PairPhase::kDone:
                 display.print(pairResult_);

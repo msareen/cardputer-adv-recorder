@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorText, type NearbyDevice, type PairOutcome } from "./api";
 
 export type PairMode = { kind: "new" } | { kind: "wifi"; deviceId: string; name: string; bleOnly: boolean };
@@ -30,9 +30,17 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
   const [transport, setTransport] = useState<"wifi" | "ble">(
     mode.kind === "wifi" && mode.bleOnly ? "ble" : "wifi",
   );
-  const changingWifi = mode.kind === "wifi";
+  // Change connection on a Cardputer that no longer knows this desktop
+  // (Forget pairing on it, or paired elsewhere) becomes a fresh pairing.
+  const [rePairing, setRePairing] = useState(false);
+  const changingWifi = mode.kind === "wifi" && !rePairing;
 
   // Leave no BLE connection open if the wizard closes mid-way.
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    root.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
+
   useEffect(() => {
     return () => {
       api.pairCancel();
@@ -62,9 +70,8 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
       const start = await api.pairStart(device.deviceId);
       if (start.known) {
         await waitForDevice();
-      } else if (changingWifi) {
-        fail("This device is paired with another desktop. Pair it again instead.");
       } else {
+        if (mode.kind === "wifi") setRePairing(true);
         setStep({ name: "compare", code: start.code ?? "" });
       }
     } catch (e) {
@@ -103,11 +110,11 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
     onClose();
   }
 
-  const title = changingWifi ? `Change connection for ${mode.name}` : "Pair a Cardputer";
+  const title = mode.kind === "wifi" ? `Change connection for ${mode.name}` : "Pair a Cardputer";
   const wifiReady = ssid === "__other" ? !!otherSsid.trim() : !!ssid;
 
   return (
-    <div className="wizard">
+    <div className="wizard" ref={root}>
       <div className="wizard-head">
         <h3>{title}</h3>
         <button className="link" onClick={cancel}>
@@ -158,6 +165,12 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
 
       {step.name === "compare" && (
         <>
+          {rePairing && (
+            <p className="muted">
+              This Cardputer does not know this computer any more (its pairing was forgotten, or it was paired
+              with another desktop). Pair it again: compare the code, then press Enter on it.
+            </p>
+          )}
           <p>Does the Cardputer show this code?</p>
           <div className="code">
             {step.code.slice(0, 3)} {step.code.slice(3)}

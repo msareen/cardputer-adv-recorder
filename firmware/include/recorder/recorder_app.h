@@ -198,6 +198,7 @@ private:
     void sendPairError(const char* code);
     void sendNetworks();
     void startPairWifi(const std::string& ssid, const std::string& password);
+    void finishPairWifi(bool joined);
     void forgetPairing();
 
     // Memory handover between audio and the radios (app/memory.cpp).

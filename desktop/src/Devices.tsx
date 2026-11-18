@@ -109,13 +109,8 @@ export function Devices({ devices, progress, syncing, present, results, estimate
         )}
       </header>
 
-      {wizard && (
-        <PairWizard
-          key={wizard.kind === "wifi" ? wizard.deviceId : "new"}
-          mode={wizard}
-          onClose={() => setWizard(null)}
-          onPaired={onChanged}
-        />
+      {wizard?.kind === "new" && (
+        <PairWizard key="new" mode={wizard} onClose={() => setWizard(null)} onPaired={onChanged} />
       )}
 
       <details className="dev-add">
@@ -140,7 +135,11 @@ export function Devices({ devices, progress, syncing, present, results, estimate
           const result = results[d.id];
           return (
             <div key={d.id} className="device-card">
-              {editing === d.id ? (
+              {wizard?.kind === "wifi" && wizard.deviceId === d.id ? (
+                // Opens in the card itself: at the top of the page it was
+                // off-screen when the list was scrolled.
+                <PairWizard key={d.id} mode={wizard} onClose={() => setWizard(null)} onPaired={onChanged} />
+              ) : editing === d.id ? (
                 <div className="device-edit">
                   <label>
                     Name
