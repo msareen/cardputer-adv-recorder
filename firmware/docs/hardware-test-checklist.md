@@ -121,6 +121,11 @@ Use the debug build (`platformio run -e cardputer-adv-recorder-debug
   shows "Sync over Bluetooth?". `Enter` starts BLE sync; on the desktop,
   Devices > Sync over Bluetooth shows an estimate, then syncs.
 - Settings > Sync > Sync over Bluetooth starts it directly.
+- Bluetooth only: pair (or Change connection) with Bluetooth only chosen on
+  the desktop. The device closes pairing at once with "Bluetooth only: press
+  S to sync", and Settings > Sync shows WiFi "BT only". `S` goes straight to
+  BLE sync (no WiFi join); the desktop's Sync now syncs over BLE. Change
+  connection > WiFi restores WiFi sync.
 - Record the serial `KB/s` for a long recording over BLE (expected
   30-80 KB/s) and the `min heap`.
 - Walk out of range mid-download: the desktop reports the link lost; Sync

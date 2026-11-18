@@ -367,10 +367,19 @@ struct PairOutcome {
 }
 
 #[tauri::command]
-async fn pair_finish(state: State<'_, AppState>, ssid: String, password: String) -> CmdResult<PairOutcome> {
+async fn pair_finish(
+    state: State<'_, AppState>,
+    ssid: String,
+    password: String,
+    bluetooth_only: Option<bool>,
+) -> CmdResult<PairOutcome> {
     let user = current_user(&state)?;
     let host = host_identity(&state, &user)?;
-    if ssid.trim().is_empty() || ssid.len() > 32 {
+    // Bluetooth only: the device gets an empty network, so it stores no
+    // WiFi and its S key goes straight to the BLE sync.
+    let bluetooth_only = bluetooth_only.unwrap_or(false);
+    let (ssid, password) = if bluetooth_only { (String::new(), String::new()) } else { (ssid, password) };
+    if !bluetooth_only && (ssid.trim().is_empty() || ssid.len() > 32) {
         return Err("Choose a WiFi network (up to 32 bytes).".into());
     }
     if password.len() > 63 {
@@ -393,12 +402,12 @@ async fn pair_finish(state: State<'_, AppState>, ssid: String, password: String)
     let _ = pairing.peripheral;
     let wifi = result.map_err(err)?;
 
-    let address = wifi.ip.as_deref().map(normalize_paired_address).transpose()?;
+    let address = if bluetooth_only { None } else { wifi.ip.as_deref().map(normalize_paired_address).transpose()? };
     let device = state
         .db
         .lock()
         .unwrap()
-        .save_paired_device(user.id, &device_id, &device_key, address.as_deref(), None, sync::now_ms())
+        .save_paired_device(user.id, &device_id, &device_key, address.as_deref(), None, bluetooth_only, sync::now_ms())
         .map_err(err)?;
     Ok(PairOutcome { device, wifi })
 }
@@ -438,6 +447,13 @@ struct SyncFinished {
 
 #[tauri::command]
 async fn sync_device(app: AppHandle, device_id: String) -> CmdResult<SyncReport> {
+    let state = app.state::<AppState>();
+    let user = current_user(&state)?;
+    let ble_only = state.db.lock().unwrap().get_device(user.id, &device_id).map_err(err)?.is_some_and(|d| d.ble_only);
+    if ble_only {
+        // No WiFi on the device: Sync now means the Bluetooth fallback.
+        return sync_device_ble(app, device_id).await;
+    }
     run_sync(&app, &device_id, false).await
 }
 
@@ -454,6 +470,9 @@ async fn run_sync(app: &AppHandle, device_id: &str, automatic: bool) -> CmdResul
         .get_device(user.id, device_id)
         .map_err(err)?
         .ok_or("Unknown device.")?;
+    if row.ble_only {
+        return Err("This device is set to Bluetooth only; it never joins WiFi.".into());
+    }
     let device = device_client(&state, &user, &row)?;
     let address = Some(device.base().to_string());
     let (result, _) = run_sync_with(app, &user, &row, automatic, async { Ok((device, address)) }).await;

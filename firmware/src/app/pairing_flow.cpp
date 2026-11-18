@@ -126,7 +126,8 @@ void RecorderApp::startPairWifi(const std::string& ssid,
     pairJoinSsid_ = ssid;
     pairPhase_ = PairPhase::kJoining;
     pairJoinStartedMs_ = millis();
-    message_ = String("Joining ") + ssid.c_str() + "...";
+    message_ = ssid.empty() ? String("Bluetooth only.")
+                            : String("Joining ") + ssid.c_str() + "...";
     forceRedraw_ = true;
     Serial.printf("[PAIR] Testing WiFi. free heap=%u largest=%u\n",
                   static_cast<unsigned>(ESP.getFreeHeap()),
@@ -365,8 +366,10 @@ void RecorderApp::servicePairing()
             pairPhase_ = PairPhase::kDone;
             Serial.printf("[PAIR] WiFi test %s\n", joined ? "ok" : "failed");
             pairResult_ =
-                joined ? String("WiFi OK: ") + pairJoinSsid_.c_str()
-                       : String("WiFi failed: ") + pairJoinSsid_.c_str();
+                pairJoinSsid_.empty()
+                    ? String("Bluetooth only: press S to sync.")
+                : joined ? String("WiFi OK: ") + pairJoinSsid_.c_str()
+                         : String("WiFi failed: ") + pairJoinSsid_.c_str();
             message_ = peer_.hostName.empty()
                            ? String("Paired.")
                            : String("Paired with ") +

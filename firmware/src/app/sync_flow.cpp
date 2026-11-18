@@ -341,16 +341,13 @@ void RecorderApp::startSync(bool automatic)
     if (automatic && peer_.wifiSsid.empty()) {
         return;  // the BLE fallback needs someone at the desktop
     }
-    if (!prepareSync()) {
+    if (peer_.wifiSsid.empty()) {
+        // Paired as Bluetooth only (or WiFi cleared from the desktop):
+        // nothing to join, so go straight to the BLE sync.
+        startBleSync();
         return;
     }
-    if (peer_.wifiSsid.empty()) {
-        // No network to join: offer the BLE fallback straight away.
-        state_ = State::kSyncing;
-        syncPhase_ = SyncPhase::kWifiFailed;
-        syncPhaseStartedMs_ = millis();
-        message_ = "No WiFi set.";
-        forceRedraw_ = true;
+    if (!prepareSync()) {
         return;
     }
 

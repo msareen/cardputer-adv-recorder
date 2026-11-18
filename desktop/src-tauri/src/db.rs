@@ -39,6 +39,9 @@ pub struct DeviceRow {
     /// Paired over BLE: synced with mutual TLS against the stored key.
     /// Unpaired rows are dev devices reached over plain HTTP.
     pub paired: bool,
+    /// Paired without WiFi: the device has no network to join, so every
+    /// sync runs over the BLE fallback and auto-sync never applies.
+    pub ble_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -82,6 +85,7 @@ CREATE TABLE IF NOT EXISTS devices (
     battery_pct INTEGER,
     unsynced    INTEGER,
     free_bytes  INTEGER,
+    ble_only    INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, id)
 );
 -- Recordings outlive their device row: removing a device forgets it on the
@@ -117,6 +121,7 @@ fn device_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceRow> {
         unsynced: row.get("unsynced")?,
         free_bytes: row.get("free_bytes")?,
         paired: row.get::<_, Option<Vec<u8>>>("public_key")?.is_some(),
+        ble_only: row.get::<_, i64>("ble_only")? != 0,
     })
 }
 
@@ -170,6 +175,17 @@ impl Db {
                 "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                  PRAGMA user_version = 1;",
             )?;
+        }
+        if version < 2 {
+            // Bluetooth-only devices (paired without WiFi).
+            let has_ble_only = self
+                .conn
+                .prepare("SELECT 1 FROM pragma_table_info('devices') WHERE name = 'ble_only'")?
+                .exists([])?;
+            if !has_ble_only {
+                self.conn.execute_batch("ALTER TABLE devices ADD COLUMN ble_only INTEGER NOT NULL DEFAULT 0;")?;
+            }
+            self.conn.execute_batch("PRAGMA user_version = 2;")?;
         }
         Ok(())
     }
@@ -333,7 +349,9 @@ impl Db {
     }
 
     /// Stores a device paired over BLE (new or re-paired). Keeps the name a
-    /// user gave it before.
+    /// user gave it before. `ble_only` records that the device was given no
+    /// WiFi network (it also clears the old address, which no longer works).
+    #[allow(clippy::too_many_arguments)]
     pub fn save_paired_device(
         &self,
         user_id: i64,
@@ -341,18 +359,21 @@ impl Db {
         public_key: &[u8],
         address: Option<&str>,
         firmware: Option<&str>,
+        ble_only: bool,
         now_ms: i64,
     ) -> DbResult<DeviceRow> {
         let default_name = format!("Cardputer {}", &device_id[..device_id.len().min(4)]);
         self.conn.execute(
-            "INSERT INTO devices (user_id, id, name, address, public_key, last_seen, firmware)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO devices (user_id, id, name, address, public_key, last_seen, firmware, ble_only)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT (user_id, id) DO UPDATE SET
                 public_key = excluded.public_key,
-                address = COALESCE(excluded.address, devices.address),
+                address = CASE WHEN excluded.ble_only THEN NULL
+                               ELSE COALESCE(excluded.address, devices.address) END,
                 last_seen = excluded.last_seen,
-                firmware = COALESCE(excluded.firmware, devices.firmware)",
-            params![user_id, device_id, default_name, address, public_key, now_ms, firmware],
+                firmware = COALESCE(excluded.firmware, devices.firmware),
+                ble_only = excluded.ble_only",
+            params![user_id, device_id, default_name, address, public_key, now_ms, firmware, ble_only],
         )?;
         Ok(self.get_device(user_id, device_id)?.expect("row just written"))
     }
@@ -554,12 +575,44 @@ mod tests {
         db.upsert_device_seen(a.id, &info("0123456789abcdef"), Some("http://x:8080"), 1).unwrap();
         db.rename_device(a.id, "0123456789abcdef", "Desk").unwrap();
         let row = db
-            .save_paired_device(a.id, "0123456789abcdef", &[4; 65], Some("https://10.0.0.2:8443"), None, 2)
+            .save_paired_device(a.id, "0123456789abcdef", &[4; 65], Some("https://10.0.0.2:8443"), None, false, 2)
             .unwrap();
         assert!(row.paired);
+        assert!(!row.ble_only);
         assert_eq!(row.name, "Desk");
         assert_eq!(row.address.as_deref(), Some("https://10.0.0.2:8443"));
         assert_eq!(db.device_public_key(a.id, "0123456789abcdef").unwrap(), Some(vec![4; 65]));
         assert_eq!(db.device_public_key(a.id, "ffffffffffffffff").unwrap(), None);
+    }
+
+    #[test]
+    fn bluetooth_only_clears_the_address_and_wifi_restores_it() {
+        let db = Db::open_in_memory().unwrap();
+        let a = db.create_user("a", "h", "/a", 0).unwrap();
+        let id = "0123456789abcdef";
+        db.save_paired_device(a.id, id, &[4; 65], Some("https://10.0.0.2:8443"), None, false, 1).unwrap();
+        let row = db.save_paired_device(a.id, id, &[4; 65], None, None, true, 2).unwrap();
+        assert!(row.ble_only);
+        assert_eq!(row.address, None);
+        let row = db.save_paired_device(a.id, id, &[4; 65], Some("https://10.0.0.3:8443"), None, false, 3).unwrap();
+        assert!(!row.ble_only);
+        assert_eq!(row.address.as_deref(), Some("https://10.0.0.3:8443"));
+    }
+
+    #[test]
+    fn migrates_a_milestone_5_devices_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE devices (user_id INTEGER NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, address TEXT,
+                                   public_key BLOB, last_cursor INTEGER NOT NULL DEFAULT 0, last_seen INTEGER,
+                                   firmware TEXT, battery_pct INTEGER, unsynced INTEGER, free_bytes INTEGER,
+                                   PRIMARY KEY (user_id, id));
+             INSERT INTO devices (user_id, id, name) VALUES (1, 'abcd', 'Old');
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+        let db = Db::init(conn).unwrap();
+        assert!(!db.get_device(1, "abcd").unwrap().unwrap().ble_only);
+        db.migrate().unwrap();
     }
 }

@@ -302,7 +302,7 @@ String RecorderApp::settingValueText(std::uint8_t index) const
                                     : String("None");
             case kSyncSettingWifi:
                 return peer_.wifiSsid.empty()
-                           ? String("Not set")
+                           ? String(peer_.paired ? "BT only" : "Not set")
                            : String(peer_.wifiSsid.c_str());
             case kSyncSettingDeleteAfterSync:
                 return settings_.deleteAfterSync ? "ON" : "OFF";

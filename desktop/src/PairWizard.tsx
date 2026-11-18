@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorText, type NearbyDevice, type PairOutcome } from "./api";
 
-export type PairMode = { kind: "new" } | { kind: "wifi"; deviceId: string; name: string };
+export type PairMode = { kind: "new" } | { kind: "wifi"; deviceId: string; name: string; bleOnly: boolean };
 
 type Step =
   | { name: "intro" }
@@ -12,7 +12,7 @@ type Step =
   | { name: "waitDevice" }
   | { name: "wifi"; networks: string[] }
   | { name: "sending" }
-  | { name: "done"; outcome: PairOutcome }
+  | { name: "done"; outcome: PairOutcome; bluetoothOnly: boolean }
   | { name: "error"; message: string };
 
 interface Props {
@@ -27,6 +27,9 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
   const [ssid, setSsid] = useState("");
   const [otherSsid, setOtherSsid] = useState("");
   const [password, setPassword] = useState("");
+  const [transport, setTransport] = useState<"wifi" | "ble">(
+    mode.kind === "wifi" && mode.bleOnly ? "ble" : "wifi",
+  );
   const changingWifi = mode.kind === "wifi";
 
   // Leave no BLE connection open if the wizard closes mid-way.
@@ -82,12 +85,13 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
 
   async function finish(e: React.FormEvent) {
     e.preventDefault();
+    const bluetoothOnly = transport === "ble";
     const chosen = ssid === "__other" ? otherSsid.trim() : ssid;
     setStep({ name: "sending" });
     try {
-      const outcome = await api.pairFinish(chosen, password);
+      const outcome = await api.pairFinish(chosen, password, bluetoothOnly);
       setPassword("");
-      setStep({ name: "done", outcome });
+      setStep({ name: "done", outcome, bluetoothOnly });
       onPaired();
     } catch (err) {
       fail(err);
@@ -99,7 +103,8 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
     onClose();
   }
 
-  const title = changingWifi ? `Change WiFi for ${mode.name}` : "Pair a Cardputer";
+  const title = changingWifi ? `Change connection for ${mode.name}` : "Pair a Cardputer";
+  const wifiReady = ssid === "__other" ? !!otherSsid.trim() : !!ssid;
 
   return (
     <div className="wizard">
@@ -175,6 +180,43 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
 
       {step.name === "wifi" && (
         <form className="wifi-form" onSubmit={finish}>
+          <div className="transport">
+            <label className="toggle">
+              <input type="radio" checked={transport === "wifi"} onChange={() => setTransport("wifi")} />
+              <span>
+                <b>WiFi (recommended)</b>
+                <span className="muted small">Fast, and syncs by itself with auto-sync.</span>
+              </span>
+            </label>
+            <label className="toggle">
+              <input type="radio" checked={transport === "ble"} onChange={() => setTransport("ble")} />
+              <span>
+                <b>Bluetooth only</b>
+                <span className="muted small">
+                  For networks the Cardputer must not or cannot join (office, guest, captive portal).
+                </span>
+              </span>
+            </label>
+          </div>
+          {transport === "ble" && (
+            <div className="warning">
+              <b>Before you choose Bluetooth only:</b>
+              <ul>
+                <li>Much slower: about 30 KB/s, roughly ten times slower than WiFi. Long recordings take minutes each.</li>
+                <li>No auto-sync. Each time, press S on the Cardputer, then Sync now here.</li>
+                <li>Keep the Cardputer within a few metres of this computer, with Bluetooth on here, for the whole sync.</li>
+                <li>
+                  {changingWifi
+                    ? "The WiFi network saved on the Cardputer is erased."
+                    : "No WiFi password is sent to or stored on the Cardputer."}{" "}
+                  You can switch to WiFi later with Change connection.
+                </li>
+                <li>Transfers stay encrypted over the paired Bluetooth link.</li>
+              </ul>
+            </div>
+          )}
+          {transport === "wifi" && (
+            <>
           <p className="muted">The Cardputer will join this network to sync. It is sent encrypted over Bluetooth.</p>
           <label>
             Network
@@ -203,22 +245,44 @@ export function PairWizard({ mode, onClose, onPaired }: Props) {
             Password
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
           </label>
-          <button className="primary" disabled={ssid === "__other" ? !otherSsid.trim() : !ssid}>
-            {changingWifi ? "Save WiFi" : "Finish pairing"}
+            </>
+          )}
+          <button className="primary" disabled={transport === "wifi" && !wifiReady}>
+            {transport === "ble"
+              ? changingWifi
+                ? "Use Bluetooth only"
+                : "Finish pairing (Bluetooth only)"
+              : changingWifi
+                ? "Save WiFi"
+                : "Finish pairing"}
           </button>
         </form>
       )}
 
-      {step.name === "sending" && <p className="muted">The Cardputer is testing the network (up to 15 s)…</p>}
+      {step.name === "sending" && (
+        <p className="muted">
+          {transport === "ble" ? "Saving on the Cardputer…" : "The Cardputer is testing the network (up to 15 s)…"}
+        </p>
+      )}
 
       {step.name === "done" && (
         <>
-          <p className="note">{changingWifi ? "WiFi updated." : `Paired with ${step.outcome.device.name}.`}</p>
-          <p className={step.outcome.wifi.ok ? "muted" : "error"}>
-            {step.outcome.wifi.ok
-              ? `It joined the network at ${step.outcome.wifi.ip}. Press S on the Cardputer, then Sync now.`
-              : "It could not join that network. The pairing is kept; use Change WiFi to try again."}
+          <p className="note">
+            {changingWifi
+              ? step.bluetoothOnly
+                ? "Now Bluetooth only."
+                : "WiFi updated."
+              : `Paired with ${step.outcome.device.name}.`}
           </p>
+          {step.bluetoothOnly ? (
+            <p className="muted">To sync: press S on the Cardputer (it shows “Bluetooth sync”), then Sync now here.</p>
+          ) : (
+            <p className={step.outcome.wifi.ok ? "muted" : "error"}>
+              {step.outcome.wifi.ok
+                ? `It joined the network at ${step.outcome.wifi.ip}. Press S on the Cardputer, then Sync now.`
+                : "It could not join that network. The pairing is kept; use Change connection to try again, or switch to Bluetooth only."}
+            </p>
+          )}
           <button className="primary" onClick={onClose}>
             Done
           </button>

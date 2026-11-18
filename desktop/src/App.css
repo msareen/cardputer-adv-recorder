@@ -517,3 +517,23 @@ label input {
   flex-direction: column;
   gap: 2px;
 }
+
+.transport {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.warning {
+  background: rgba(245, 196, 107, 0.1);
+  border: 1px solid rgba(245, 196, 107, 0.4);
+  color: #f5d9a3;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.warning ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}

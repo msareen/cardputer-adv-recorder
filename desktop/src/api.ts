@@ -39,6 +39,8 @@ export interface Device {
   freeBytes: number | null;
   /** Paired over Bluetooth: synced over HTTPS pinned to its key. */
   paired: boolean;
+  /** Paired without WiFi: every sync runs over Bluetooth, no auto-sync. */
+  bleOnly: boolean;
 }
 
 export interface NearbyDevice {
@@ -126,7 +128,8 @@ export const api = {
   bleScan: () => invoke<NearbyDevice[]>("ble_scan"),
   pairStart: (deviceId: string) => invoke<PairStart>("pair_start", { deviceId }),
   pairReady: () => invoke<string[]>("pair_ready"),
-  pairFinish: (ssid: string, password: string) => invoke<PairOutcome>("pair_finish", { ssid, password }),
+  pairFinish: (ssid: string, password: string, bluetoothOnly = false) =>
+    invoke<PairOutcome>("pair_finish", { ssid, password, bluetoothOnly }),
   pairCancel: () => invoke<void>("pair_cancel"),
 
   listRecordings: () => invoke<Recording[]>("list_recordings"),

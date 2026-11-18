@@ -166,13 +166,19 @@ export function Devices({ devices, progress, syncing, present, results, estimate
                         <span className={`tag ${d.paired ? "secure" : "warn"}`}>
                           {d.paired ? "paired · TLS" : "dev · HTTP"}
                         </span>
+                        {d.bleOnly && <span className="tag warn">Bluetooth only</span>}
                         {present.has(d.id) && <span className="tag live">on network</span>}
                       </div>
                       <div className="muted mono">
-                        {d.id} · {d.address ?? "no address"}
+                        {d.id} · {d.bleOnly ? "no WiFi" : (d.address ?? "no address")}
                       </div>
                     </div>
-                    <button className="primary" disabled={isSyncing} onClick={() => onSync(d.id)}>
+                    <button
+                      className="primary"
+                      disabled={isSyncing}
+                      title={d.bleOnly ? "Press S on the Cardputer first. Over Bluetooth, about 30 KB/s." : undefined}
+                      onClick={() => onSync(d.id, d.bleOnly)}
+                    >
                       {isSyncing ? "Syncing…" : "Sync now"}
                     </button>
                   </div>
@@ -198,6 +204,11 @@ export function Devices({ devices, progress, syncing, present, results, estimate
                       {d.firmware ?? "—"}
                     </div>
                   </div>
+                  {!isSyncing && d.bleOnly && !result && (
+                    <div className="sync-line muted small">
+                      Bluetooth only: press S on the Cardputer, then Sync now. Slow (about 30 KB/s), no auto-sync.
+                    </div>
+                  )}
                   {isSyncing && estimates[d.id] && <div className="sync-line">{estimateText(estimates[d.id]!)}</div>}
                   {isSyncing && <div className="sync-line">{progressText(progress[d.id])}</div>}
                   {isSyncing && progress[d.id]?.phase === "downloading" && (
@@ -235,11 +246,13 @@ export function Devices({ devices, progress, syncing, present, results, estimate
                       Edit
                     </button>
                     {d.paired && (
-                      <button onClick={() => setWizard({ kind: "wifi", deviceId: d.id, name: d.name })}>
-                        Change WiFi
+                      <button
+                        onClick={() => setWizard({ kind: "wifi", deviceId: d.id, name: d.name, bleOnly: d.bleOnly })}
+                      >
+                        Change connection
                       </button>
                     )}
-                    {d.paired && (
+                    {d.paired && !d.bleOnly && (
                       <button
                         disabled={isSyncing}
                         title="When the Cardputer cannot reach WiFi: choose Sync over Bluetooth on it first. Slower (about 30 KB/s)."

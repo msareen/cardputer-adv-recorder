@@ -80,11 +80,17 @@ Keys are 65-byte uncompressed P-256 points; nonces are 16 random bytes.
    clearing its acks.
 4. device tries the network once (15 s): `{t:"wifi", ok, ip}`.
 
+Bluetooth only: the host sends `ssid` and `pass` as empty strings. The
+device stores no network, skips the join and answers `{t:"wifi", ok:false,
+ip:""}` at once; its `S` key then starts the BLE sync fallback directly.
+The desktop records the device as `ble_only` and syncs it over BLE only.
+
 ### Known desktop (`known` = true): change WiFi
 
 1. device: `{t:"session"}` (proves it holds its key and still pairs with
    this host), then `networks`.
 2. host: `{t:"set_wifi", ssid, pass}`; device answers with `wifi` as above.
+   An empty `ssid` erases the stored network (switch to Bluetooth only).
 
 ### Errors
 
