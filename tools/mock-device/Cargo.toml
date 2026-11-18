@@ -1,6 +1,6 @@
 [package]
 name = "mock-device"
-version = "0.1.0"
+version = "1.5.0"
 edition = "2021"
 description = "Fake Cardputer ADV Recorder that serves the /v1 sync protocol from a folder of WAV files"
 

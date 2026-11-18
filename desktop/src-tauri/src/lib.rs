@@ -11,9 +11,11 @@ pub mod device;
 pub mod discovery;
 pub mod identity;
 pub mod library;
+pub mod model_download;
 pub mod pairing;
 pub mod protocol;
 pub mod sync;
+pub mod transcribe;
 pub mod tls;
 
 use std::{
@@ -68,6 +70,7 @@ pub struct AppState {
     agents: Arc<agents::AgentCore>,
     /// The local MCP server while it runs, or why it could not start.
     mcp: tokio::sync::Mutex<McpState>,
+    transcribe: TranscribeState,
 }
 
 #[derive(Default)]
@@ -551,6 +554,9 @@ async fn run_sync_with<D: Device>(
             error: result.as_ref().err().cloned(),
         },
     );
+    if result.as_ref().is_ok_and(|r| r.downloaded > 0) {
+        auto_transcribe(app, user);
+    }
     (result, Some(device))
 }
 
@@ -907,6 +913,223 @@ fn set_agent_guidelines(state: State<'_, AppState>, guidelines: Guidelines) -> C
     state.agents.set_guidelines(user.id, &guidelines).map_err(err)
 }
 
+// --- local transcription (sherpa-onnx) -----------------------------------------------
+
+const TRANSCRIBE_MODEL_DIR: &str = "transcribe_model_dir";
+const TRANSCRIBE_LANGUAGE: &str = "transcribe_language";
+const TRANSCRIBE_AUTO: &str = "transcribe_auto";
+
+/// One transcription pass at a time (the model is heavy), and the recordings
+/// that failed this run so a bad file is not retried after every sync.
+#[derive(Default)]
+struct TranscribeState {
+    lock: tokio::sync::Mutex<()>,
+    failed: Mutex<HashSet<String>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscribeSettings {
+    /// Folder with a sherpa-onnx Whisper export; empty when not set up.
+    model_dir: String,
+    /// Whisper language code, "en" by default.
+    language: String,
+    /// Transcribe new recordings as soon as a sync brings them in.
+    auto: bool,
+    /// The folder is set and holds the model files.
+    ready: bool,
+}
+
+fn transcribe_settings_for(state: &AppState) -> TranscribeSettings {
+    let db = state.db.lock().unwrap();
+    let model_dir = db.setting(TRANSCRIBE_MODEL_DIR).ok().flatten().unwrap_or_default();
+    let language = db.setting(TRANSCRIBE_LANGUAGE).ok().flatten().unwrap_or_else(|| "en".to_string());
+    let auto = db.setting(TRANSCRIBE_AUTO).ok().flatten().is_none_or(|v| v == "1");
+    let ready = !model_dir.is_empty() && transcribe::find_model(std::path::Path::new(&model_dir)).is_ok();
+    TranscribeSettings { model_dir, language, auto, ready }
+}
+
+#[tauri::command]
+fn transcribe_settings(state: State<'_, AppState>) -> TranscribeSettings {
+    transcribe_settings_for(&state)
+}
+
+#[tauri::command]
+fn set_transcribe_settings(state: State<'_, AppState>, model_dir: String, language: String, auto: bool) -> CmdResult<TranscribeSettings> {
+    let model_dir = model_dir.trim().to_string();
+    if !model_dir.is_empty() {
+        transcribe::find_model(std::path::Path::new(&model_dir)).map_err(err)?;
+    }
+    let language = if language.trim().is_empty() { "en".to_string() } else { language.trim().to_string() };
+    {
+        let db = state.db.lock().unwrap();
+        db.set_setting(TRANSCRIBE_MODEL_DIR, Some(model_dir.as_str()).filter(|d| !d.is_empty())).map_err(err)?;
+        db.set_setting(TRANSCRIBE_LANGUAGE, Some(&language)).map_err(err)?;
+        db.set_setting(TRANSCRIBE_AUTO, Some(if auto { "1" } else { "0" })).map_err(err)?;
+    }
+    Ok(transcribe_settings_for(&state))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscribeProgress {
+    recording: String,
+    fraction: f32,
+}
+
+/// `state`: queued, started, done, failed.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscribeStatus {
+    recording: String,
+    state: &'static str,
+    error: Option<String>,
+}
+
+/// Installs the default model (Whisper tiny.en, bundled with the app) into the
+/// app data folder and selects it. No network access.
+#[tauri::command]
+async fn download_default_model(app: AppHandle, state: State<'_, AppState>) -> CmdResult<TranscribeSettings> {
+    current_user(&state)?;
+    let models = app.path().app_data_dir().map_err(err)?.join("models");
+    let mut bundled = app.path().resource_dir().map_err(err)?.join(model_download::bundled_subdir());
+    if !bundled.is_dir() {
+        // `tauri dev` runs from target/, where resources are not copied.
+        bundled = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(model_download::bundled_subdir());
+    }
+    let dir = tokio::task::spawn_blocking(move || model_download::install_bundled(&bundled, &models))
+        .await
+        .map_err(err)??;
+    state.db.lock().unwrap().set_setting(TRANSCRIBE_MODEL_DIR, Some(&dir.to_string_lossy())).map_err(err)?;
+    Ok(transcribe_settings_for(&state))
+}
+
+/// Recordings of the user that have no transcript yet and whose file exists.
+fn recordings_without_transcript(state: &AppState, user: &User) -> Vec<db::RecordingRow> {
+    let db = state.db.lock().unwrap();
+    let done: HashSet<String> = db
+        .list_attributes(user.id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|a| a.scope == "recording" && a.kind == "transcript")
+        .map(|a| a.target)
+        .collect();
+    let failed = state.transcribe.failed.lock().unwrap();
+    db.list_recordings(user.id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| {
+            let key = agents::recording_ref(r);
+            !done.contains(&key) && !failed.contains(&key) && std::path::Path::new(&r.path).is_file()
+        })
+        .collect()
+}
+
+/// Transcribes `rows` one after another with a single model load and saves
+/// each as its `transcript` attribute (text/vtt). Progress and results go out
+/// as `transcribe-status` / `transcribe-progress` events.
+fn spawn_transcription(app: &AppHandle, user: User, rows: Vec<db::RecordingRow>, force: bool) {
+    if rows.is_empty() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let settings = transcribe_settings_for(&state);
+    for r in &rows {
+        let _ = app.emit("transcribe-status", TranscribeStatus { recording: agents::recording_ref(r), state: "queued", error: None });
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let _pass = state.transcribe.lock.lock().await;
+        let agents = state.agents.clone();
+        let blocking_app = app.clone();
+        let (model_dir, language) = (std::path::PathBuf::from(&settings.model_dir), settings.language);
+        let _ = tokio::task::spawn_blocking(move || {
+            let app = blocking_app;
+            let status = |reference: &str, state: &'static str, error: Option<String>| {
+                let _ = app.emit("transcribe-status", TranscribeStatus { recording: reference.to_string(), state, error });
+            };
+            let mut model = match transcribe::Transcriber::new(&model_dir, &language) {
+                Ok(m) => m,
+                Err(e) => {
+                    for r in &rows {
+                        status(&agents::recording_ref(r), "failed", Some(e.to_string()));
+                    }
+                    return;
+                }
+            };
+            let principal = agents::Principal { user: user.clone(), token_id: 0, token_name: "app (sherpa-onnx)".to_string(), can_write: true };
+            for row in rows {
+                let reference = agents::recording_ref(&row);
+                let already = agents.read_attribute(user.id, "recording", &reference, "transcript").is_ok();
+                if already && !force {
+                    status(&reference, "done", None);
+                    continue;
+                }
+                status(&reference, "started", None);
+                let outcome = model
+                    .transcribe_wav(std::path::Path::new(&row.path), |fraction| {
+                        let _ = app.emit("transcribe-progress", TranscribeProgress { recording: reference.clone(), fraction });
+                    })
+                    .map_err(|e| e.to_string())
+                    .and_then(|cues| {
+                        if cues.is_empty() {
+                            return Err("No speech found in this recording.".to_string());
+                        }
+                        agents
+                            .set_attribute(&principal, &agents::Target::Recording(row.clone()), "transcript", Some("text/vtt"), &transcribe::to_vtt(&cues), sync::now_ms())
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    });
+                match outcome {
+                    Ok(()) => status(&reference, "done", None),
+                    Err(e) => {
+                        app.state::<AppState>().transcribe.failed.lock().unwrap().insert(reference.clone());
+                        status(&reference, "failed", Some(e));
+                    }
+                }
+            }
+        })
+        .await;
+    });
+}
+
+/// After a sync: transcribe whatever has no transcript yet, if auto is on.
+fn auto_transcribe(app: &AppHandle, user: &User) {
+    let state = app.state::<AppState>();
+    let settings = transcribe_settings_for(&state);
+    if settings.auto && settings.ready {
+        spawn_transcription(app, user.clone(), recordings_without_transcript(&state, user), false);
+    }
+}
+
+/// Transcribes one recording now (also replaces an existing transcript).
+#[tauri::command]
+fn transcribe_recording(app: AppHandle, state: State<'_, AppState>, recording: String) -> CmdResult<()> {
+    let user = current_user(&state)?;
+    if !transcribe_settings_for(&state).ready {
+        return Err("Speech model not set up. Choose a sherpa-onnx Whisper folder in Settings.".to_string());
+    }
+    let row = state.agents.find_recording(user.id, &recording).map_err(err)?;
+    state.transcribe.failed.lock().unwrap().remove(&agents::recording_ref(&row));
+    spawn_transcription(&app, user, vec![row], true);
+    Ok(())
+}
+
+/// Transcribes every recording that has no transcript. Returns how many.
+#[tauri::command]
+fn transcribe_missing(app: AppHandle, state: State<'_, AppState>) -> CmdResult<usize> {
+    let user = current_user(&state)?;
+    if !transcribe_settings_for(&state).ready {
+        return Err("Speech model not set up. Choose a sherpa-onnx Whisper folder in Settings.".to_string());
+    }
+    state.transcribe.failed.lock().unwrap().clear();
+    let rows = recordings_without_transcript(&state, &user);
+    let count = rows.len();
+    spawn_transcription(&app, user, rows, false);
+    Ok(count)
+}
+
 /// Every attribute of the user (no content), for the library.
 #[tauri::command]
 fn list_attributes(state: State<'_, AppState>) -> CmdResult<Vec<AttributeRow>> {
@@ -930,6 +1153,7 @@ fn delete_attribute(state: State<'_, AppState>, scope: String, target: String, k
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
@@ -961,6 +1185,7 @@ pub fn run() {
                 mdns: Mutex::new(None),
                 agents,
                 mcp: tokio::sync::Mutex::new(McpState::default()),
+                transcribe: TranscribeState::default(),
             });
             let handle = app.handle().clone();
             if let Some(user) = &remembered {
@@ -1029,6 +1254,11 @@ pub fn run() {
             revoke_agent_token,
             set_agent_guidelines,
             list_attributes,
+            transcribe_settings,
+            set_transcribe_settings,
+            transcribe_recording,
+            transcribe_missing,
+            download_default_model,
             read_attribute,
             delete_attribute,
         ])

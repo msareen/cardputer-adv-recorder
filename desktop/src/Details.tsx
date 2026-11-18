@@ -1,5 +1,6 @@
 // Drill-down views for the Library: one day (across devices) and one
 // recording, with the attributes agents saved (summary, transcript...) as tabs.
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState, type ReactNode } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, errorText, type Attribute, type Recording } from "./api";
@@ -167,7 +168,7 @@ function AttributeTabs({
   if (!selected) return <div className="attr-empty">{empty}</div>;
 
   async function remove(attr: Attribute) {
-    if (!window.confirm(`Delete the "${attr.kind}" attribute? The recording is not affected.`)) return;
+    if (!(await ask(`Delete the "${attr.kind}" attribute? The recording is not affected.`, { kind: "warning" }))) return;
     try {
       await api.deleteAttribute(attr.scope, attr.target, attr.kind);
     } catch (e) {

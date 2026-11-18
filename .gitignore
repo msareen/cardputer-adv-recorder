@@ -13,3 +13,6 @@ dist/
 target/
 node_modules/
 tools/mock-device/sdcard/
+
+# Speech models: release artifacts, fetched by tools/fetch_models.py
+desktop/src-tauri/resources/models/

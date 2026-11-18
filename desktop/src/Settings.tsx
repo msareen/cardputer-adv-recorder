@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { api, errorText, type AppSettings, type User } from "./api";
 import { AgentAccess } from "./AgentAccess";
+import { Transcription } from "./Transcription";
 
 export function Settings({ user, onUser }: { user: User; onUser: (u: User) => void }) {
   const [path, setPath] = useState(user.libraryPath);
@@ -108,6 +109,7 @@ export function Settings({ user, onUser }: { user: User; onUser: (u: User) => vo
           </label>
         </div>
       )}
+      <Transcription />
       <AgentAccess />
     </section>
   );

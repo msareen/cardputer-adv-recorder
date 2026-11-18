@@ -1,6 +1,6 @@
 [package]
 name = "cprec-desktop"
-version = "0.1.0"
+version = "1.5.0"
 description = "Desktop sync app for the Cardputer ADV Recorder"
 authors = []
 edition = "2024"
@@ -26,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Paired devices: HTTPS with mutual TLS and a verifier that pins the device
 # key (tls.rs). Unpaired dev devices (tools/mock-device): plain HTTP.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-manual-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-manual-roots", "rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio = { version = "1", features = ["fs", "io-util", "rt-multi-thread", "macros", "time", "sync", "net"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -58,6 +58,10 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs"] }
 tokio-util = "0.7"
 hex = "0.4"
+# Local speech-to-text (transcribe.rs): sherpa-onnx Whisper models, CPU only.
+sherpa-rs = { version = "0.6.8", default-features = false, features = ["download-binaries"] }
+hound = "3"
+tauri-plugin-dialog = "2"
 
 [dev-dependencies]
 tempfile = "3"

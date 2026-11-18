@@ -1,3 +1,4 @@
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 import { api, errorText, type AgentSettings, type Guidelines } from "./api";
 import { formatTime } from "./format";
@@ -76,7 +77,7 @@ export function AgentAccess() {
   }
 
   async function revoke(id: number, name: string) {
-    if (!window.confirm(`Revoke "${name}"? Agents using it lose access immediately.`)) return;
+    if (!(await ask(`Revoke "${name}"? Agents using it lose access immediately.`, { kind: "warning" }))) return;
     try {
       await api.revokeAgentToken(id);
       // The one-time secret panel belongs to the token just created: if that

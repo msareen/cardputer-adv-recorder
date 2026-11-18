@@ -1,6 +1,7 @@
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { api, errorText, onAttributesChanged, type Attribute, type Recording } from "./api";
+import { api, errorText, onAttributesChanged, onTranscribeProgress, onTranscribeStatus, type Attribute, type Recording } from "./api";
 import { formatBytes, formatDay, formatDuration, formatTime } from "./format";
 import { DayView, RecordingView, isoDay, recordingTitle as title, recordingWhen as when, sortAttributes } from "./Details";
 
@@ -42,6 +43,43 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
   const [error, setError] = useState("");
   const [attributes, setAttributes] = useState<Map<string, Attribute[]>>(new Map());
   const [view, setView] = useState<View>({ kind: "list" });
+  // Recording ref -> transcription state (queued / running with a fraction / failed).
+  const [jobs, setJobs] = useState<Map<string, { state: string; fraction: number; error?: string }>>(new Map());
+
+  useEffect(() => {
+    const status = onTranscribeStatus((e) =>
+      setJobs((prev) => {
+        const next = new Map(prev);
+        if (e.state === "done") next.delete(e.recording);
+        else next.set(e.recording, { state: e.state, fraction: 0, error: e.error ?? undefined });
+        return next;
+      }),
+    );
+    const progress = onTranscribeProgress((recording, fraction) =>
+      setJobs((prev) => new Map(prev).set(recording, { state: "started", fraction })),
+    );
+    return () => {
+      status.then((f) => f());
+      progress.then((f) => f());
+    };
+  }, []);
+
+  async function transcribe(r: Recording) {
+    setError("");
+    try {
+      if (!(await api.transcribeSettings()).ready) {
+        const yes = await ask(
+          "Transcription needs a speech model. Download the default one (Whisper tiny.en, about 110 MB) now?",
+          { kind: "info" },
+        );
+        if (!yes) return;
+        await api.downloadDefaultModel();
+      }
+      await api.transcribeRecording(`${r.deviceId}/${r.id}`);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
 
   const loadAttributes = useCallback(async () => {
     try {
@@ -104,7 +142,7 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
   }
 
   async function deleteFromDevice(r: Recording) {
-    if (!window.confirm(`Delete "${title(r)}" from the device? The copy in your library is kept.`)) return;
+    if (!(await ask(`Delete "${title(r)}" from the device? The copy in your library is kept.`, { kind: "warning" }))) return;
     try {
       await api.deleteFromDevice(r.deviceId, r.id);
       onChanged();
@@ -213,6 +251,13 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
                         {r.displayName && <> · on device as {r.name}</>}
                         {!r.onDevice && <span className="tag">removed from device</span>}
                         {!r.acked && <span className="tag warn">ack pending</span>}
+                        {(() => {
+                          const job = jobs.get(`${r.deviceId}/${r.id}`);
+                          if (!job) return null;
+                          if (job.state === "failed") return <span className="tag warn" title={job.error}>transcript failed</span>;
+                          if (job.state === "queued") return <span className="tag live">transcribing: queued</span>;
+                          return <span className="tag live">transcribing {Math.round(job.fraction * 100)}%</span>;
+                        })()}
                       </div>
                       <AttributeChips
                         items={attributes.get(attrKey("recording", `${r.deviceId}/${r.id}`))}
@@ -229,6 +274,13 @@ export function Library({ recordings, playing, onPlay, onChanged }: Props) {
                       >
                         Rename
                       </button>
+                      {!jobs.has(`${r.deviceId}/${r.id}`) || jobs.get(`${r.deviceId}/${r.id}`)?.state === "failed" ? (
+                        <button onClick={() => transcribe(r)}>
+                          {attributes.get(attrKey("recording", `${r.deviceId}/${r.id}`))?.some((a) => a.kind === "transcript")
+                            ? "Re-transcribe"
+                            : "Transcribe"}
+                        </button>
+                      ) : null}
                       <button onClick={() => revealItemInDir(r.path).catch((e) => setError(errorText(e)))}>
                         Show file
                       </button>

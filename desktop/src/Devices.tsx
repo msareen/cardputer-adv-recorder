@@ -1,3 +1,4 @@
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { api, errorText, type BleEstimate, type Device, type SyncEvent, type SyncReport } from "./api";
 import { formatAgo, formatBytes } from "./format";
@@ -83,7 +84,7 @@ export function Devices({ devices, progress, syncing, present, results, estimate
   }
 
   async function remove(d: Device) {
-    if (!window.confirm(`Forget ${d.name} on this computer? Synced recordings stay in your library.`)) return;
+    if (!(await ask(`Forget ${d.name} on this computer? Synced recordings stay in your library.`, { kind: "warning" }))) return;
     try {
       await api.removeDevice(d.id);
       onChanged();

@@ -16,6 +16,9 @@ jobs:
         working-directory: firmware
     steps:
       - uses: actions/checkout@v6
+      - name: Tag must match VERSION
+        working-directory: .
+        run: python tools/set_version.py --check ${{ github.ref_name }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -74,6 +77,8 @@ jobs:
       - name: Install frontend dependencies
         working-directory: desktop
         run: npm ci
+      - name: Fetch bundled speech models
+        run: python tools/fetch_models.py
       - name: Desktop tests
         working-directory: desktop/src-tauri
         run: cargo test

@@ -140,7 +140,26 @@ export interface Attribute {
   updatedMs: number;
 }
 
+export interface TranscribeSettings {
+  modelDir: string;
+  language: string;
+  auto: boolean;
+  ready: boolean;
+}
+
+export interface TranscribeStatus {
+  recording: string;
+  state: "queued" | "started" | "done" | "failed";
+  error: string | null;
+}
+
 export const api = {
+  transcribeSettings: () => invoke<TranscribeSettings>("transcribe_settings"),
+  setTranscribeSettings: (modelDir: string, language: string, auto: boolean) =>
+    invoke<TranscribeSettings>("set_transcribe_settings", { modelDir, language, auto }),
+  transcribeRecording: (recording: string) => invoke<void>("transcribe_recording", { recording }),
+  downloadDefaultModel: () => invoke<TranscribeSettings>("download_default_model"),
+  transcribeMissing: () => invoke<number>("transcribe_missing"),
   agentSettings: () => invoke<AgentSettings>("agent_settings"),
   setAgentAccess: (enabled: boolean, port: number) => invoke<AgentSettings>("set_agent_access", { enabled, port }),
   createAgentToken: (name: string, canWrite: boolean) =>
@@ -220,6 +239,22 @@ export function onBleEstimate(handler: (e: BleEstimate) => void): Promise<Unlist
 /** An agent wrote or deleted an attribute. */
 export function onAttributesChanged(handler: () => void): Promise<UnlistenFn> {
   return listen("attributes-changed", () => handler());
+}
+
+export function onTranscribeStatus(handler: (e: TranscribeStatus) => void): Promise<UnlistenFn> {
+  return listen<TranscribeStatus>("transcribe-status", (e) => handler(e.payload));
+}
+
+export function onTranscribeProgress(handler: (recording: string, fraction: number) => void): Promise<UnlistenFn> {
+  return listen<{ recording: string; fraction: number }>("transcribe-progress", (e) =>
+    handler(e.payload.recording, e.payload.fraction),
+  );
+}
+
+export function onModelDownloadProgress(handler: (bytes: number, total: number | null) => void): Promise<UnlistenFn> {
+  return listen<{ bytes: number; total: number | null }>("model-download-progress", (e) =>
+    handler(e.payload.bytes, e.payload.total),
+  );
 }
 
 export function errorText(e: unknown): string {

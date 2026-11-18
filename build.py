@@ -73,14 +73,15 @@ def which(*names: str) -> str | None:
 
 
 def version() -> str:
-    """The git tag if HEAD is tagged, else the desktop version plus the commit."""
+    """The git tag if HEAD is tagged, else the VERSION file plus the commit."""
     try:
         return subprocess.check_output(
             ["git", "describe", "--tags", "--exact-match"], cwd=ROOT, stderr=subprocess.DEVNULL, text=True
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
-    conf = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
+    base = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    conf = {"version": base}
     try:
         commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
         dirty = subprocess.run(["git", "diff", "--quiet", "HEAD"], cwd=ROOT).returncode != 0
@@ -182,6 +183,9 @@ def build_desktop(tests: bool, installer: bool, universal: bool) -> list[Path]:
     if not cargo:
         fail("cargo not found. Install Rust from https://rustup.rs")
 
+    run([sys.executable, str(ROOT / "tools" / "set_version.py"), "--check"], ROOT)
+    log("Desktop: fetch bundled speech models")
+    run([sys.executable, str(ROOT / "tools" / "fetch_models.py")], ROOT)
     log("Desktop: install frontend dependencies")
     run([npm, "ci" if (DESKTOP / "package-lock.json").exists() else "install"], DESKTOP)
     if tests:
