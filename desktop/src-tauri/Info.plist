@@ -4,5 +4,13 @@
 <dict>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>Cardputer Sync uses Bluetooth to pair with your Cardputer and send it your WiFi settings.</string>
+  <!-- macOS 15+ asks before an app talks to the local network: finding the
+       Cardputer by mDNS and syncing from it over WiFi both need this. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Cardputer Sync finds your Cardputer on this network and downloads its recordings over WiFi.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_cprec._tcp</string>
+  </array>
 </dict>
 </plist>
