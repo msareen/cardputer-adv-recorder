@@ -537,3 +537,117 @@ label input {
   margin: 6px 0 0;
   padding-left: 18px;
 }
+
+/* pairing wizard */
+.wizard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px 18px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 640px;
+}
+
+/* Inside a device card the card is already the frame. */
+.device-card .wizard {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.wizard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.wizard-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.wizard p {
+  margin: 0;
+}
+
+.steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wizard > button,
+.wizard .row {
+  align-self: flex-start;
+}
+
+.nearby {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nearby-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.nearby-item:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.nearby-item .mono {
+  margin-left: 8px;
+}
+
+.code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 32px;
+  letter-spacing: 4px;
+  font-weight: 600;
+}
+
+.wifi-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wifi-form > button {
+  align-self: flex-start;
+}
+
+select {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.dev-add {
+  margin-bottom: 16px;
+}
+
+.dev-add summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dev-add[open] summary {
+  margin-bottom: 8px;
+}
